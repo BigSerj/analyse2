@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Отчет о прибыльности (iframe)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 15px;
+            font-family: Arial, sans-serif;
+        }
+        
+        .container {
+            max-width: 100%;
+            padding: 0;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        select, input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+
+        .add-group-btn {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        .add-group-btn:hover {
+            background-color: #e9ecef;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        .submit-btn:hover {
+            background-color: #45a049;
+        }
+
+        .selected-groups {
+            margin-top: 10px;
+        }
+
+        .selected-group-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px;
+            margin: 5px 0;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+        }
+
+        .remove-group {
+            color: red;
+            cursor: pointer;
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+        }
+
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            z-index: 1000;
+        }
+        
+        .loading-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+        
+        .error-message {
+            color: red;
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #ffe6e6;
+            border: 1px solid #ffcccc;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        .success-message {
+            color: green;
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #e6ffe6;
+            border: 1px solid #ccffcc;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .group-container {
+            position: relative;
+            margin-bottom: 15px;
+            padding: 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+        
+        .group-selects-container {
+            margin-top: 8px;
+            margin-bottom: 10px;
+        }
+        
+        .remove-group-btn {
+            color: white;
+            background-color: #dc3545;
+            border: none;
+            border-radius: 4px;
+            float: right;
+            cursor: pointer;
+            padding: 2px 8px;
+            font-size: 16px;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            margin-top: -10px;
+            transition: background-color 0.3s;
+        }
+        
+        .remove-group-btn:hover {
+            background-color: #c82333;
+        }
+    </style>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        window.productGroups = {{ product_groups_json|safe }};
+
+        $(document).ready(function() {
+            console.log('DOM Ready');
+            console.log('Product Groups:', window.productGroups);
+            
+            let selectedGroups = [];
+
+            function createGroupSelect(level, parentGroup) {
+                console.log('Creating select for level', level, 'parent group:', parentGroup);
+                
+                const select = $('<select>', {
+                    class: 'form-control group-select',
+                    name: 'product_groups[]',
+                    'data-level': level
+                });
+
+                select.append($('<option>', {
+                    value: '',
+                    text: 'Выберите подгруппу'
+                }));
+
+                if (parentGroup && parentGroup.children) {
+                    parentGroup.children.forEach(child => {
+                        select.append($('<option>', {
+                            value: child.id,
+                            text: child.name,
+                            'data-has-children': child.children && child.children.length > 0 ? '1' : '0'
+                        }));
+                    });
+                }
+
+                return select;
+            }
+
+            function createNewGroupContainer() {
+                const container = $('<div>', {
+                    class: 'group-container'
+                });
+
+                const removeBtn = $('<button>', {
+                    type: 'button',
+                    class: 'remove-group-btn',
+                    text: '×'
+                });
+
+                const selectsContainer = $('<div>', {
+                    class: 'group-selects-container'
+                });
+
+                const initialSelect = createGroupSelect(0, { children: window.productGroups });
+
+                selectsContainer.append(initialSelect);
+                container.append(removeBtn);
+                container.append(selectsContainer);
+
+                return container;
+            }
+
+            function updateRemoveButtons() {
+                const containers = $('.group-container');
+                if (containers.length > 1) {
+                    $('.remove-group-btn').show();
+                } else {
+                    $('.remove-group-btn').hide();
+                }
+            }
+
+            // Обработчик добавления новой группы
+            $('#addGroupBtn').on('click', function() {
+                const newContainer = createNewGroupContainer();
+                $('#allGroupsContainer').append(newContainer);
+                updateRemoveButtons();
+                updateSelectedGroups();
+            });
+
+            // Обработчик удаления группы
+            $(document).on('click', '.remove-group-btn', function() {
+                $(this).closest('.group-container').remove();
+                updateRemoveButtons();
+                updateSelectedGroups();
+            });
+
+            // Обработчик изменения select'а
+            $(document).on('change', '.group-select', function() {
+                const level = parseInt($(this).data('level'));
+                const selectedValue = $(this).val();
+                const container = $(this).closest('.group-selects-container');
+
+                // Удаляем все селекты после текущего
+                $(this).nextAll('.group-select').remove();
+
+                if (selectedValue) {
+                    const selectedGroup = findGroupById(selectedValue, window.productGroups);
+                    if (selectedGroup && selectedGroup.children && selectedGroup.children.length > 0) {
+                        const newSelect = createGroupSelect(level + 1, selectedGroup);
+                        container.append(newSelect);
+                    }
+                }
+
+                updateSelectedGroups();
+            });
+
+            function findGroupById(id, groups) {
+                for (let group of groups) {
+                    if (group.id === id) {
+                        return group;
+                    }
+                    if (group.children && group.children.length > 0) {
+                        const found = findGroupById(id, group.children);
+                        if (found) return found;
+                    }
+                }
+                return null;
+            }
+
+            function updateSelectedGroups() {
+                selectedGroups = [];
+                
+                // Собираем последние выбранные значения из каждого контейнера
+                $('.group-container').each(function() {
+                    const lastSelected = $(this).find('.group-select').filter(function() {
+                        return $(this).val() !== '';
+                    }).last().val();
+                    
+                    if (lastSelected) {
+                        selectedGroups.push(lastSelected);
+                    }
+                });
+                
+                $('input[name="final_product_groups"]').val(selectedGroups.join(','));
+                console.log('Updated selected groups:', selectedGroups);
+            }
+
+            // Добавляем обработчик отправки формы
+            $('#reportForm').on('submit', function(e) {
+                e.preventDefault(); // Предотвращаем стандартную отправку формы
+                
+                const formData = new FormData(this);
+                
+                $.ajax({
+                    url: '/process',
+                    type: 'POST',
+                    data: formData,
+                    processData: false,
+                    contentType: false,
+                    beforeSend: function() {
+                        $('.loading').show();
+                        $('.error-message').hide();
+                        $('.success-message').hide();
+                    },
+                    success: function(response) {
+                        if (response.success && response.file_url) {
+                            window.location.href = response.file_url;
+                        } else {
+                            $('.error-message').text('Ошибка при формировании отчета').show();
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        let errorMessage = 'Произошла ошибка при формировании отчета';
+                        if (xhr.responseJSON && xhr.responseJSON.error) {
+                            errorMessage = xhr.responseJSON.error;
+                        }
+                        $('.error-message').text(errorMessage).show();
+                    },
+                    complete: function() {
+                        $('.loading').hide();
+                    }
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="loading" style="display: none;">
+            <div class="loading-content">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Загрузка...</span>
+                </div>
+                <p>Формирование отчета...</p>
+            </div>
+        </div>
+        <div class="error-message" style="display: none;"></div>
+        <div class="success-message" style="display: none;"></div>
+
+        <h1>Отчет о прибыльности</h1>
+        <form id="reportForm">
+            <div class="form-group">
+                <label for="start_date">Дата начала:</label>
+                <input type="date" id="start_date" name="start_date" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="end_date">Дата окончания:</label>
+                <input type="date" id="end_date" name="end_date" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="store_id">Склад:</label>
+                <select id="store_id" name="store_id" required>
+                    <option value="">Выберите склад</option>
+                    {% for store in stores %}
+                    <option value="{{ store.id }}">{{ store.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Группы товаров:</label>
+                <div id="allGroupsContainer">
+                    <div class="group-container">
+                        <button type="button" class="remove-group-btn" style="display: none;">×</button>
+                        <div class="group-selects-container">
+                            <select class="form-control group-select" name="product_groups[]" data-level="0">
+                                <option value="">Выберите группу товаров</option>
+                                {% for group in product_groups %}
+                                    <option value="{{ group.id }}" 
+                                            data-has-children="{{ '1' if group.get('children') else '0' }}"
+                                            data-level="0">
+                                        {{ group.name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <button type="button" class="add-group-btn" id="addGroupBtn">+ Добавить группу товаров</button>
+                <input type="hidden" name="final_product_groups" value="">
+            </div>
+
+            <div class="form-group">
+                <label for="planning_days">Дней планирования закупки:</label>
+                <input type="number" id="planning_days" name="planning_days" required min="1" value="30">
+            </div>
+            
+            <div class="form-group">
+                <label>Введите минимальный остаток для товаров в подгруппе не ниже:</label>
+                <select id="manual_stock_group">
+                    <option value="">Выберите группу</option>
+                    {{ render_group_options(product_groups)|safe }}
+                </select>
+                <input type="number" id="min_stock_value" min="0" placeholder="Минимальный остаток">
+                <div class="selected-manual-stock-groups"></div>
+                <input type="hidden" name="final_manual_stock_groups" id="final_manual_stock_groups" value="[]">
+                <button type="button" class="add-group-btn" id="add_manual_stock_group">+ Добавить группу для минимального остатка</button>
+            </div>
+            
+            <button type="submit" class="submit-btn">Сформировать отчет</button>
+        </form>
+    </div>
+</body>
+</html> 
