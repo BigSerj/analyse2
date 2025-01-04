@@ -588,8 +588,11 @@ def create_excel_report(data, store_id, end_date, planning_days, manual_stock_se
             cell = ws.cell(row=1, column=col, value=header)
             cell.font = Font(color="000000", bold=True)
 
-        # Определяем палитру цветов для заливки
+        # Находим текущее определение палитры цветов
         color_palette = ['b7b7b7', 'cccccc', 'd9d9d9', 'efefef', 'f3f3f3']
+
+        # Заменяем на обратный порядок
+        color_palette = ['f3f3f3', 'efefef', 'd9d9d9', 'cccccc', 'b7b7b7']
         
         # Записываем данные с группами
         current_row = 2
