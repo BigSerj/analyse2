@@ -139,12 +139,12 @@ def render_group_options(groups, level=0):
         indent = '—' * level
         has_children = '1' if group.get('children') and len(group['children']) > 0 else '0'
         
-        # print(f"\nRendering group: {group['name']}")
-        # print(f"  Level: {level}")
-        # print(f"  Has children: {has_children}")
-        # print(f"  Children count: {len(group.get('children', []))}")
-        # print(f"  Parent: {group.get('parent')}")
-        # print(f"  Raw group data: {group}")  # Добавляем вывод сырых данных группы
+        print(f"\nRendering group: {group['name']}")
+        print(f"  Level: {level}")
+        print(f"  Has children: {has_children}")
+        print(f"  Children count: {len(group.get('children', []))}")
+        print(f"  Parent: {group.get('parent')}")
+        print(f"  Raw group data: {group}")  # Добавляем вывод сырых данных группы
         
         option_html = (
             f'<option value="{group["id"]}" '
@@ -156,12 +156,12 @@ def render_group_options(groups, level=0):
             f'</option>'
         )
         
-        # print(f"  Generated HTML: {option_html}")
+        print(f"  Generated HTML: {option_html}")
         result.append(option_html)
         
         if group.get('children'):
             child_options = render_group_options(group['children'], level + 1)
-            # print(f"  Added {len(child_options.split('\n'))} child options for {group['name']}")
+            print(f"  Added {len(child_options.split('\n'))} child options for {group['name']}")
             result.extend(child_options)
     
     return '\n'.join(result)
