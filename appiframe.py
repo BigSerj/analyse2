@@ -139,12 +139,12 @@ def render_group_options(groups, level=0):
         indent = '—' * level
         has_children = '1' if group.get('children') and len(group['children']) > 0 else '0'
         
-        print(f"\nRendering group: {group['name']}")
-        print(f"  Level: {level}")
-        print(f"  Has children: {has_children}")
-        print(f"  Children count: {len(group.get('children', []))}")
-        print(f"  Parent: {group.get('parent')}")
-        print(f"  Raw group data: {group}")  # Добавляем вывод сырых данных группы
+        # print(f"\nRendering group: {group['name']}")
+        # print(f"  Level: {level}")
+        # print(f"  Has children: {has_children}")
+        # print(f"  Children count: {len(group.get('children', []))}")
+        # print(f"  Parent: {group.get('parent')}")
+        # print(f"  Raw group data: {group}")  # Добавляем вывод сырых данных группы
         
         option_html = (
             f'<option value="{group["id"]}" '
@@ -156,12 +156,12 @@ def render_group_options(groups, level=0):
             f'</option>'
         )
         
-        print(f"  Generated HTML: {option_html}")
+        # print(f"  Generated HTML: {option_html}")
         result.append(option_html)
         
         if group.get('children'):
             child_options = render_group_options(group['children'], level + 1)
-            print(f"  Added {len(child_options.split('\n'))} child options for {group['name']}")
+            # print(f"  Added {len(child_options.split('\n'))} child options for {group['name']}")
             result.extend(child_options)
     
     return '\n'.join(result)
@@ -220,18 +220,18 @@ def get_product_groups():
 
 # Добавляем функцию build_group_hierarchy из app.py
 def build_group_hierarchy(groups):
-    print("\nStarting build_group_hierarchy")
-    print(f"Received {len(groups)} groups")
+    # print("\nStarting build_group_hierarchy")
+    # print(f"Received {len(groups)} groups")
     
     group_dict = {}
     root_groups = []
 
     # Первый проход - создаем словарь всех групп
-    print("\nFirst pass - creating groups dictionary")
+    # print("\nFirst pass - creating groups dictionary")
     for group in groups:
         group_id = group['id']
-        print(f"\nProcessing group: {group['name']} (ID: {group_id})")
-        print(f"Raw group data: {group}")  # Печатаем сырые данные группы
+        # print(f"\nProcessing group: {group['name']} (ID: {group_id})")
+        # print(f"Raw group data: {group}")  # Печатаем сырые данные группы
         
         group_dict[group_id] = {
             'id': group_id,
@@ -243,47 +243,47 @@ def build_group_hierarchy(groups):
         }
 
     # Второй проход - строим иерархию
-    print("\nSecond pass - building hierarchy")
+    # print("\nSecond pass - building hierarchy")
     for group in groups:
         group_id = group['id']
         parent_folder = group.get('productFolder', {})
-        print(f"\nProcessing group: {group['name']} (ID: {group_id})")
-        print(f"Parent folder data: {parent_folder}")
+        # print(f"\nProcessing group: {group['name']} (ID: {group_id})")
+        # print(f"Parent folder data: {parent_folder}")
         
         if parent_folder and parent_folder.get('meta'):
             parent_id = parent_folder['meta']['href'].split('/')[-1]
-            print(f"Found parent ID: {parent_id}")
+            # print(f"Found parent ID: {parent_id}")
             
             if parent_id in group_dict:
                 group_dict[group_id]['parent'] = parent_id
                 group_dict[parent_id]['children'].append(group_dict[group_id])
                 group_dict[parent_id]['has_children'] = True
-                print(f"Added group {group_id} as child to parent {parent_id}")
-                print(f"Parent's children count: {len(group_dict[parent_id]['children'])}")
+                # print(f"Added group {group_id} as child to parent {parent_id}")
+                # print(f"Parent's children count: {len(group_dict[parent_id]['children'])}")
         else:
             root_groups.append(group_dict[group_id])
-            print(f"Added group {group_id} to root groups")
+            # print(f"Added group {group_id} to root groups")
 
-    print(f"\nFound {len(root_groups)} root groups")
+    # print(f"\nFound {len(root_groups)} root groups")
     
     # Рекурсивная функция для установки уровней
     def set_levels(groups, level=0):
         for group in groups:
             group['level'] = level
-            print(f"Set level {level} for group {group['name']}")
+            # print(f"Set level {level} for group {group['name']}")
             if group['children']:
                 group['has_children'] = True
-                print(f"Group {group['name']} has {len(group['children'])} children")
+                # print(f"Group {group['name']} has {len(group['children'])} children")
                 set_levels(group['children'], level + 1)
                 group['children'].sort(key=lambda x: x['name'])
 
     # Сортируем и устанавливаем уровни
     root_groups.sort(key=lambda x: x['name'])
-    print("\nSetting levels for hierarchy")
+    # print("\nSetting levels for hierarchy")
     set_levels(root_groups)
 
-    print("\nFinal hierarchy structure:")
-    print_hierarchy(root_groups)
+    # print("\nFinal hierarchy structure:")
+    # print_hierarchy(root_groups)
     
     return root_groups
 
