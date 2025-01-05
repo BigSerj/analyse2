@@ -84,9 +84,8 @@ def process():
         if not report_data or 'rows' not in report_data or not report_data['rows']:
             return jsonify({'error': 'Нет данных для формирования отчета'}), 404
         
-        excel_file = create_excel_report(report_data, store_id, end_date, planning_days, manual_stock_settings)
+        excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days, manual_stock_settings)
         
-        # Возвращаем URL для скачивания файла
         return jsonify({'success': True, 'file_url': f'/download/{excel_file}'})
     
     except Exception as e:
@@ -403,109 +402,180 @@ def get_report_data(start_date, end_date, store_id, product_groups):
             abort(499, description="Processing cancelled by user")
         raise e
 
-def get_sales_speed(variant_id, store_id, end_date, is_variant):
-    url = f"{BASE_URL}/report/turnover/byoperations"
-    headers = {
-        'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
-        'Accept': 'application/json;charset=utf-8'
-    }
+def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
+    def try_get_operations(start_datetime, end_datetime):
+        url = f"{BASE_URL}/report/turnover/byoperations"
+        headers = {
+            'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
+            'Accept': 'application/json;charset=utf-8'
+        }
+        
+        start_date_formatted = start_datetime.strftime('%Y-%m-%d %H:%M:%S')
+        end_date_formatted = end_datetime.strftime('%Y-%m-%d %H:%M:%S')
+        
+        params = {
+            'momentFrom': start_date_formatted,
+            'momentTo': end_date_formatted,
+            'limit': 1000,
+            'order': 'moment,asc'
+        }
+        
+        assortment_type = 'variant' if is_variant else 'product'
+        filter_params = [
+            f"filter=store={BASE_URL}/entity/store/{store_id}",
+            f"filter={assortment_type}={BASE_URL}/entity/{assortment_type}/{variant_id}"
+        ]
+        
+        query_string = '&'.join([f"{k}={v}" for k, v in params.items()] + filter_params)
+        full_url = f"{url}?{query_string}"
+        
+        print(f"Запрос для получения операций: URL={full_url}")
+        
+        response = requests.get(full_url, headers=headers)
+        if response.status_code != 200:
+            print(f"Ошибка при получении данных: {response.status_code}. Ответ сервера: {response.text}")
+            return None
+            
+        return response.json()
+
+    # Преобразуем даты в datetime объекты
+    end_datetime = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+    original_start = datetime.strptime(start_date, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
     
-    start_date = "2024-01-01 00:00:00"
-    end_date_formatted = datetime.strptime(end_date, '%Y-%m-%d').strftime('%Y-%m-%d 23:59:59')
-    
-    assortment_type = 'variant' if is_variant else 'product'
-    
-    filter_params = [
-        f"filter=store={BASE_URL}/entity/store/{store_id}",
-        f"filter={assortment_type}={BASE_URL}/entity/{assortment_type}/{variant_id}"
+    # Попытки с разными начальными датами
+    attempts = [
+        original_start - timedelta(days=180),  # -6 месяцев
+        original_start - timedelta(days=360),  # -12 месяцев
+        original_start - timedelta(days=540),  # -18 месяцев
+        original_start - timedelta(days=720),  # -24 месяца
+        datetime(1990, 1, 1)  # Финальная попытка с 1990 года
     ]
     
-    params = {
-        'momentFrom': start_date,
-        'momentTo': end_date_formatted,
-    }
+    all_operations = []
+    found_arrival = False
     
-    query_string = '&'.join([f"{k}={v}" for k, v in params.items()] + filter_params)
-    full_url = f"{url}?{query_string}"
+    for attempt_start in attempts:
+        data = try_get_operations(attempt_start, end_datetime)
+        if not data:
+            continue
+            
+        # Фильтруем строки для нужной модификации
+        rows = [
+            row for row in data.get('rows', [])
+            if row['assortment']['meta']['href'].split('/')[-1] == variant_id
+        ]
+        
+        if not rows:
+            continue
+            
+        print(f"Попытка с датой {attempt_start}: найдено {len(rows)} операций")
+        
+        # Проверяем, есть ли приходы товара
+        arrivals = [
+            row for row in rows
+            if row['quantity'] > 0
+        ]
+        
+        if arrivals:
+            found_arrival = True
+            all_operations = rows
+            break
+            
+        if not found_arrival and attempt_start == attempts[-1]:
+            print("Не найдено ни одного прихода товара даже с 1990 года")
+            return 0, '', '', '', ''
     
-    print(f"Запрос для получения данных о продажах: URL={full_url}")
+    if not all_operations:
+        return 0, '', '', '', ''
     
-    response = requests.get(full_url, headers=headers)
-    if response.status_code != 200:
-        print(f"Ошибка при получении данных о продажах: {response.status_code}. Ответ сервера: {response.text}")
-        return 0, '', '', '', ''  # Возвращаем 0 для скорости и пустую строку для UUID
-
-    data = response.json()
-    rows = data.get('rows', [])
-
-    # Фильтрация по UUID модификации
-    filtered_rows = [
-        row for row in rows
-        if row.get('assortment', {}).get('meta', {}).get('href', '').split('/')[-1] == variant_id
-    ]
-
-    # Получаем UUID группы и название группы из отфильтрованных данных
+    print(f"Всего операций после фильтрации по variant_id {variant_id}: {len(all_operations)}")
+    print(f"Название модификации: {all_operations[0]['assortment']['name'] if all_operations else 'Нет данных'}")
+    
+    # Получаем метаданные группы и товара
     group_uuid = ''
     group_name = ''
     product_uuid = ''
     product_href = ''
     
-    if filtered_rows:
-        assortment = filtered_rows[0].get('assortment', {})
+    if all_operations:
+        assortment = all_operations[0].get('assortment', {})
         product_folder = assortment.get('productFolder', {})
         group_href = product_folder.get('meta', {}).get('href', '')
         group_uuid = group_href.split('/')[-1] if group_href else ''
         group_name = product_folder.get('name', '')
         
-        # Получаем UUID и ссылку на товар из отфильтрованной строки
         product_meta = assortment.get('meta', {})
         product_href = product_meta.get('uuidHref', '')
         if product_href:
             product_uuid = product_meta.get('href', '').split('/')[-1]
-        
-        print(f"Found group UUID: {group_uuid}, name: {group_name}")
-
+    
     # Сортировка операций по дате
-    filtered_rows.sort(key=lambda x: datetime.fromisoformat(x['operation']['moment'].replace('Z', '+00:00')))
-
-    retail_demand_counter = 0
-    current_stock = 0
-    last_operation_time = None
-    on_stock_time = timedelta()
-
-    end_datetime = datetime.strptime(end_date_formatted, '%Y-%m-%d %H:%M:%S')
-
-    for row in filtered_rows:
-        quantity = row['quantity']
+    all_operations.sort(key=lambda x: datetime.fromisoformat(x['operation']['moment'].replace('Z', '+00:00')))
+    
+    # Собираем все приходы и продажи
+    arrivals = []  # [(time, quantity)]
+    sales = []     # [(time, quantity)]
+    
+    # Собираем операции
+    for row in all_operations:
         operation_time = datetime.fromisoformat(row['operation']['moment'].replace('Z', '+00:00'))
+        quantity = row['quantity']
         operation_type = row['operation']['meta']['type']
-
-        if last_operation_time and current_stock > 0:
-            on_stock_time += operation_time - last_operation_time
-
+        
         if quantity > 0:  # Приход товара
-            current_stock += quantity
-        else:  # Уход товара
-            quantity = abs(quantity)
-            current_stock = max(0, current_stock - quantity)
-            if operation_type == 'retaildemand':
-                retail_demand_counter += quantity
-
-        last_operation_time = operation_time
-
-    # Учитываем время от последней операции до конца периода
-    if last_operation_time and current_stock > 0:
-        on_stock_time += end_datetime - last_operation_time
-
+            arrivals.append((operation_time, quantity))
+            print(f"Приход товара: {quantity} шт. в {operation_time}")
+        elif operation_type == 'retaildemand' and original_start <= operation_time <= end_datetime:
+            sales.append((operation_time, abs(quantity)))
+            print(f"Розничная продажа: {abs(quantity)} шт. в {operation_time}")
+    
+    # Обработка продаж
+    retail_demand_counter = 0
+    on_stock_time = timedelta()
+    current_stock = []  # [(arrival_time, quantity)]
+    
+    # Для каждой продажи найдем соответствующий приход
+    for sale_time, sale_quantity in sales:
+        # Обновляем current_stock всеми приходами до текущей продажи
+        while arrivals and arrivals[0][0] < sale_time:
+            arrival_time, arrival_quantity = arrivals.pop(0)
+            current_stock.append((arrival_time, arrival_quantity))
+        
+        # Если есть товар на складе
+        quantity_to_sell = sale_quantity
+        while quantity_to_sell > 0 and current_stock:
+            arrival_time, available_quantity = current_stock[0]
+            
+            # Сколько можем продать из текущей партии
+            sold_from_batch = min(quantity_to_sell, available_quantity)
+            
+            # Считаем время на складе для проданных товаров
+            time_on_stock = sale_time - arrival_time
+            on_stock_time += time_on_stock * sold_from_batch
+            print(f"Продано {sold_from_batch} шт. из партии от {arrival_time}")
+            print(f"Время на складе: {time_on_stock} × {sold_from_batch} шт.")
+            
+            retail_demand_counter += sold_from_batch
+            quantity_to_sell -= sold_from_batch
+            
+            # Обновляем или удаляем партию
+            if sold_from_batch == available_quantity:
+                current_stock.pop(0)
+            else:
+                current_stock[0] = (arrival_time, available_quantity - sold_from_batch)
+    
     days_on_stock = on_stock_time.total_seconds() / (24 * 60 * 60)
-
+    
     if days_on_stock > 0:
         sales_speed = round(retail_demand_counter / days_on_stock, 2)
     else:
         sales_speed = 0
-
-    print(f"sales_speed: {sales_speed}, group_uuid: {group_uuid}, product_href: {product_href}")
-
+    
+    print(f"Вариант товара: {variant_id}")
+    print(f"Период на складе (дней): {days_on_stock}")
+    print(f"Количество розничных продаж: {retail_demand_counter}")
+    print(f"Скорость продаж: {sales_speed}")
+    
     return sales_speed, group_uuid, group_name, product_uuid, product_href
 
 def get_group_path(group_uuid, product_groups, get_uuid=False):
@@ -528,10 +598,10 @@ def get_group_path(group_uuid, product_groups, get_uuid=False):
     names_path, uuid_path = path
     return ('/'.join(names_path), uuid_path) if not get_uuid else ('/'.join(uuid_path), uuid_path)
 
-def create_excel_report(data, store_id, end_date, planning_days, manual_stock_settings=None):
+def create_excel_report(data, store_id, start_date, end_date, planning_days, manual_stock_settings=None):
     try:
         print("Начало создания Excel отчета")
-        print(f"Полученные настройки минимальных остатков: {manual_stock_settings}")  # Для отладки
+        print(f"Полученные настройки минимальных остатков: {manual_stock_settings}")
         
         wb = Workbook()
         ws = wb.active
@@ -551,7 +621,10 @@ def create_excel_report(data, store_id, end_date, planning_days, manual_stock_se
             variant_id = assortment_href.split('/variant/')[-1] if is_variant else assortment_href.split('/product/')[-1]
             
             if variant_id:
-                sales_speed, group_uuid, group_name, product_uuid, product_href = get_sales_speed(variant_id, store_id, end_date, is_variant)
+                # Передаем обе даты в функцию get_sales_speed
+                sales_speed, group_uuid, group_name, product_uuid, product_href = get_sales_speed(
+                    variant_id, store_id, start_date, end_date, is_variant
+                )
                 if sales_speed != 0:
                     full_path, uuid_path = get_group_path(group_uuid, product_groups)
                     max_depth = max(max_depth, len(uuid_path))  # Используем длину списка UUID
