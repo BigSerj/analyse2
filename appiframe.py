@@ -138,12 +138,12 @@ def render_group_options(groups, level=0):
         indent = '—' * level
         has_children = '1' if group.get('children') and len(group['children']) > 0 else '0'
         
-        print(f"\nRendering group: {group['name']}")
-        print(f"  Level: {level}")
-        print(f"  Has children: {has_children}")
-        print(f"  Children count: {len(group.get('children', []))}")
-        print(f"  Parent: {group.get('parent')}")
-        print(f"  Raw group data: {group}")  # Добавляем вывод сырых данных группы
+        # print(f"\nRendering group: {group['name']}")
+        # print(f"  Level: {level}")
+        # print(f"  Has children: {has_children}")
+        # print(f"  Children count: {len(group.get('children', []))}")
+        # print(f"  Parent: {group.get('parent')}")
+        # print(f"  Raw group data: {group}")  # Добавляем вывод сырых данных группы
         
         option_html = (
             f'<option value="{group["id"]}" '
@@ -155,12 +155,12 @@ def render_group_options(groups, level=0):
             f'</option>'
         )
         
-        print(f"  Generated HTML: {option_html}")
+        # print(f"  Generated HTML: {option_html}")
         result.append(option_html)
         
         if group.get('children'):
             child_options = render_group_options(group['children'], level + 1)
-            print(f"  Added {len(child_options.split('\n'))} child options for {group['name']}")
+            # print(f"  Added {len(child_options.split('\n'))} child options for {group['name']}")
             result.extend(child_options)
     
     return '\n'.join(result)
@@ -403,93 +403,59 @@ def get_report_data(start_date, end_date, store_id, product_groups):
         raise e
 
 def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
-    def try_get_operations(start_datetime, end_datetime):
-        url = f"{BASE_URL}/report/turnover/byoperations"
-        headers = {
-            'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
-            'Accept': 'application/json;charset=utf-8'
-        }
-        
-        start_date_formatted = start_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        end_date_formatted = end_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        
-        params = {
-            'momentFrom': start_date_formatted,
-            'momentTo': end_date_formatted,
-            'limit': 1000,
-            'order': 'moment,asc'
-        }
-        
-        assortment_type = 'variant' if is_variant else 'product'
-        filter_params = [
-            f"filter=store={BASE_URL}/entity/store/{store_id}",
-            f"filter={assortment_type}={BASE_URL}/entity/{assortment_type}/{variant_id}"
-        ]
-        
-        query_string = '&'.join([f"{k}={v}" for k, v in params.items()] + filter_params)
-        full_url = f"{url}?{query_string}"
-        
-        print(f"Запрос для получения операций: URL={full_url}")
-        
-        response = requests.get(full_url, headers=headers)
-        if response.status_code != 200:
-            print(f"Ошибка при получении данных: {response.status_code}. Ответ сервера: {response.text}")
-            return None
-            
-        return response.json()
-
+    url = f"{BASE_URL}/report/turnover/byoperations"
+    headers = {
+        'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
+        'Accept': 'application/json;charset=utf-8'
+    }
+    
     # Преобразуем даты в datetime объекты
     end_datetime = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
     original_start = datetime.strptime(start_date, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
     
-    # Попытки с разными начальными датами
-    attempts = [
-        original_start - timedelta(days=180),  # -6 месяцев
-        original_start - timedelta(days=360),  # -12 месяцев
-        original_start - timedelta(days=540),  # -18 месяцев
-        original_start - timedelta(days=720),  # -24 месяца
-        datetime(1990, 1, 1)  # Финальная попытка с 1990 года
+    # Устанавливаем начальную дату на 5 лет раньше
+    extended_start = original_start - timedelta(days=5*365)
+    
+    # Форматируем даты для API
+    start_date_formatted = extended_start.strftime('%Y-%m-%d %H:%M:%S')
+    end_date_formatted = end_datetime.strftime('%Y-%m-%d %H:%M:%S')
+    
+    params = {
+        'momentFrom': start_date_formatted,
+        'momentTo': end_date_formatted,
+        'limit': 1000,
+        'order': 'moment,asc'
+    }
+    
+    assortment_type = 'variant' if is_variant else 'product'
+    filter_params = [
+        f"filter=store={BASE_URL}/entity/store/{store_id}",
+        f"filter={assortment_type}={BASE_URL}/entity/{assortment_type}/{variant_id}"
     ]
     
-    all_operations = []
-    found_arrival = False
+    query_string = '&'.join([f"{k}={v}" for k, v in params.items()] + filter_params)
+    full_url = f"{url}?{query_string}"
     
-    for attempt_start in attempts:
-        data = try_get_operations(attempt_start, end_datetime)
-        if not data:
-            continue
-            
-        # Фильтруем строки для нужной модификации
-        rows = [
-            row for row in data.get('rows', [])
-            if row['assortment']['meta']['href'].split('/')[-1] == variant_id
-        ]
-        
-        if not rows:
-            continue
-            
-        print(f"Попытка с датой {attempt_start}: найдено {len(rows)} операций")
-        
-        # Проверяем, есть ли приходы товара
-        arrivals = [
-            row for row in rows
-            if row['quantity'] > 0
-        ]
-        
-        if arrivals:
-            found_arrival = True
-            all_operations = rows
-            break
-            
-        if not found_arrival and attempt_start == attempts[-1]:
-            print("Не найдено ни одного прихода товара даже с 1990 года")
-            return 0, '', '', '', ''
+    print(f"Запрос для получения операций: URL={full_url}")
     
-    if not all_operations:
+    response = requests.get(full_url, headers=headers)
+    if response.status_code != 200:
+        print(f"Ошибка при получении данных: {response.status_code}. Ответ сервера: {response.text}")
+        return 0, '', '', '', ''
+
+    data = response.json()
+    
+    # Фильтруем строки для нужной модификации
+    rows = [
+        row for row in data.get('rows', [])
+        if row['assortment']['meta']['href'].split('/')[-1] == variant_id
+    ]
+    
+    if not rows:
         return 0, '', '', '', ''
     
-    print(f"Всего операций после фильтрации по variant_id {variant_id}: {len(all_operations)}")
-    print(f"Название модификации: {all_operations[0]['assortment']['name'] if all_operations else 'Нет данных'}")
+    print(f"Всего операций после фильтрации по variant_id {variant_id}: {len(rows)}")
+    print(f"Название модификации: {rows[0]['assortment']['name']}")
     
     # Получаем метаданные группы и товара
     group_uuid = ''
@@ -497,72 +463,71 @@ def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     product_uuid = ''
     product_href = ''
     
-    if all_operations:
-        assortment = all_operations[0].get('assortment', {})
-        product_folder = assortment.get('productFolder', {})
-        group_href = product_folder.get('meta', {}).get('href', '')
-        group_uuid = group_href.split('/')[-1] if group_href else ''
-        group_name = product_folder.get('name', '')
-        
-        product_meta = assortment.get('meta', {})
-        product_href = product_meta.get('uuidHref', '')
-        if product_href:
-            product_uuid = product_meta.get('href', '').split('/')[-1]
+    assortment = rows[0].get('assortment', {})
+    product_folder = assortment.get('productFolder', {})
+    group_href = product_folder.get('meta', {}).get('href', '')
+    group_uuid = group_href.split('/')[-1] if group_href else ''
+    group_name = product_folder.get('name', '')
+    
+    product_meta = assortment.get('meta', {})
+    product_href = product_meta.get('uuidHref', '')
+    if product_href:
+        product_uuid = product_meta.get('href', '').split('/')[-1]
     
     # Сортировка операций по дате
-    all_operations.sort(key=lambda x: datetime.fromisoformat(x['operation']['moment'].replace('Z', '+00:00')))
+    rows.sort(key=lambda x: datetime.fromisoformat(x['operation']['moment'].replace('Z', '+00:00')))
     
-    # Собираем все приходы и продажи
-    arrivals = []  # [(time, quantity)]
-    sales = []     # [(time, quantity)]
+    # Отслеживаем каждую единицу товара
+    stock_items = []  # [(arrival_time, sold_time)] для каждой единицы товара
+    current_stock = []  # [(arrival_time, quantity)]
+    retail_demand_counter = 0
+    on_stock_time = timedelta()
     
-    # Собираем операции
-    for row in all_operations:
+    # Проходим по всем операциям для построения полной картины движения товара
+    for row in rows:
         operation_time = datetime.fromisoformat(row['operation']['moment'].replace('Z', '+00:00'))
         quantity = row['quantity']
         operation_type = row['operation']['meta']['type']
         
         if quantity > 0:  # Приход товара
-            arrivals.append((operation_time, quantity))
+            current_stock.append((operation_time, quantity))
             print(f"Приход товара: {quantity} шт. в {operation_time}")
+            
         elif operation_type == 'retaildemand' and original_start <= operation_time <= end_datetime:
-            sales.append((operation_time, abs(quantity)))
-            print(f"Розничная продажа: {abs(quantity)} шт. в {operation_time}")
-    
-    # Обработка продаж
-    retail_demand_counter = 0
-    on_stock_time = timedelta()
-    current_stock = []  # [(arrival_time, quantity)]
-    
-    # Для каждой продажи найдем соответствующий приход
-    for sale_time, sale_quantity in sales:
-        # Обновляем current_stock всеми приходами до текущей продажи
-        while arrivals and arrivals[0][0] < sale_time:
-            arrival_time, arrival_quantity = arrivals.pop(0)
-            current_stock.append((arrival_time, arrival_quantity))
-        
-        # Если есть товар на складе
-        quantity_to_sell = sale_quantity
-        while quantity_to_sell > 0 and current_stock:
-            arrival_time, available_quantity = current_stock[0]
+            # Розничная продажа в указанном периоде
+            quantity_to_sell = abs(quantity)
+            print(f"Розничная продажа: {quantity_to_sell} шт. в {operation_time}")
             
-            # Сколько можем продать из текущей партии
-            sold_from_batch = min(quantity_to_sell, available_quantity)
-            
-            # Считаем время на складе для проданных товаров
-            time_on_stock = sale_time - arrival_time
-            on_stock_time += time_on_stock * sold_from_batch
-            print(f"Продано {sold_from_batch} шт. из партии от {arrival_time}")
-            print(f"Время на складе: {time_on_stock} × {sold_from_batch} шт.")
-            
-            retail_demand_counter += sold_from_batch
-            quantity_to_sell -= sold_from_batch
-            
-            # Обновляем или удаляем партию
-            if sold_from_batch == available_quantity:
-                current_stock.pop(0)
-            else:
-                current_stock[0] = (arrival_time, available_quantity - sold_from_batch)
+            # Ищем товар для продажи в порядке FIFO
+            while quantity_to_sell > 0 and current_stock:
+                arrival_time, available_quantity = current_stock[0]
+                sold_from_batch = min(quantity_to_sell, available_quantity)
+                
+                # Добавляем время на складе для каждой проданной единицы
+                time_on_stock = operation_time - arrival_time
+                on_stock_time += time_on_stock * sold_from_batch
+                print(f"Продано {sold_from_batch} шт. из партии от {arrival_time}")
+                print(f"Время на складе: {time_on_stock} × {sold_from_batch} шт.")
+                
+                retail_demand_counter += sold_from_batch
+                quantity_to_sell -= sold_from_batch
+                
+                # Обновляем или удаляем партию
+                if sold_from_batch == available_quantity:
+                    current_stock.pop(0)
+                else:
+                    current_stock[0] = (arrival_time, available_quantity - sold_from_batch)
+                    
+        elif quantity < 0:  # Другие операции ухода товара
+            # Просто уменьшаем количество в stock по FIFO
+            quantity_to_remove = abs(quantity)
+            while quantity_to_remove > 0 and current_stock:
+                if current_stock[0][1] <= quantity_to_remove:
+                    quantity_to_remove -= current_stock[0][1]
+                    current_stock.pop(0)
+                else:
+                    current_stock[0] = (current_stock[0][0], current_stock[0][1] - quantity_to_remove)
+                    quantity_to_remove = 0
     
     days_on_stock = on_stock_time.total_seconds() / (24 * 60 * 60)
     
@@ -677,7 +642,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 
             try:
                 manual_settings = json.loads(manual_stock_settings)
-                print(f"Разобранные настройки: {manual_settings}")  # Для отладки
+                # print(f"Разобранные настройки: {manual_settings}")  # Для отладки
                 max_stock = None
                 
                 # Проверяем каждую группу в пути товара
