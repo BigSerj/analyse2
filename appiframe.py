@@ -532,7 +532,7 @@ def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     days_on_stock = on_stock_time.total_seconds() / (24 * 60 * 60)
     
     if days_on_stock > 0:
-        sales_speed = round(retail_demand_counter / days_on_stock, 2)
+        sales_speed = retail_demand_counter / days_on_stock
     else:
         sales_speed = 0
     
@@ -590,19 +590,33 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 sales_speed, group_uuid, group_name, product_uuid, product_href = get_sales_speed(
                     variant_id, store_id, start_date, end_date, is_variant
                 )
-                if sales_speed != 0:
+                
+                # Изменяем условие: проверяем количество продаж вместо скорости
+                if item.get('sellQuantity', 0) > 0:  # Теперь проверяем количество продаж
                     full_path, uuid_path = get_group_path(group_uuid, product_groups)
-                    max_depth = max(max_depth, len(uuid_path))  # Используем длину списка UUID
+                    max_depth = max(max_depth, len(uuid_path))
+                    
+                    # Находим количество знаков после запятой для отображения
+                    if sales_speed > 0:
+                        decimal_str = str(sales_speed).split('.')[-1]
+                        non_zero_count = 0
+                        for i, digit in enumerate(decimal_str):
+                            if digit != '0':
+                                non_zero_count = i + 2
+                                break
+                        display_sales_speed = round(sales_speed, non_zero_count)
+                    else:
+                        display_sales_speed = 0
                     
                     products_data.append({
                         'name': assortment.get('name', ''),
                         'quantity': item.get('sellQuantity', 0),
                         'profit': round(item.get('profit', 0) / 100, 2),
-                        'sales_speed': sales_speed,
-                        'forecast': sales_speed * planning_days,
+                        'sales_speed': display_sales_speed,  # Используем значение с нужным количеством знаков
+                        'forecast': sales_speed * planning_days,  # Для прогноза используем точное значение
                         'group_uuid': group_uuid,
                         'group_path': full_path,
-                        'uuid_path': uuid_path,  # Сохраняем список UUID для правильного определения уровней
+                        'uuid_path': uuid_path,
                         'names_by_level': get_names_by_uuid(uuid_path, product_groups),
                         'product_uuid': product_uuid,
                         'product_href': product_href
@@ -642,7 +656,6 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 
             try:
                 manual_settings = json.loads(manual_stock_settings)
-                # print(f"Разобранные настройки: {manual_settings}")  # Для отладки
                 max_stock = None
                 
                 # Проверяем каждую группу в пути товара
@@ -650,8 +663,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     for setting in manual_settings:
                         if setting['group_id'] == group_uuid:
                             setting_value = int(setting['min_stock'])
-                            print(f"Найдено значение {setting_value} для группы {group_uuid}")  # Для отладки
-                            # Сохраняем максимальное значение из всех подходящих групп
+                            print(f"Найдено значение {setting_value} для группы {group_uuid}")
                             if max_stock is None or setting_value > max_stock:
                                 max_stock = setting_value
                 
@@ -670,23 +682,21 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 if i >= len(current_uuid_path) or uuid != current_uuid_path[i]:
                     if i > 0:
                         ws.cell(row=current_row, column=i, value=names_by_level[i])
-                        # Определяем цвет заливки для текущего уровня
                         color_index = min(i - 1, len(color_palette) - 1)
                         fill_color = color_palette[color_index]
-                        # Применяем заливку к каждой ячейке в строке
                         for col in range(1, ws.max_column + 1):
                             cell = ws.cell(row=current_row, column=col)
                             cell.fill = PatternFill(start_color=fill_color, 
                                                   end_color=fill_color, 
                                                   fill_type='solid')
                     
-                    if current_row > 2:  # Пропускаем запись UUID для второй строки
+                    if current_row > 2:
                         uuid_cell = ws.cell(row=current_row, column=max_depth, value=uuid)
                         uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
                     current_row += 1
             
             # При записи UUID товара
-            if current_row > 2:  # Пропускаем запись UUID для второй строки
+            if current_row > 2:
                 uuid_cell = ws.cell(row=current_row, column=max_depth)
                 if product['product_href']:
                     uuid_cell.value = product['product_uuid']
@@ -694,11 +704,18 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     uuid_cell.font = Font(color="0000FF", underline="single")
                     uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
             
+            # Записываем данные продукта
             ws.cell(row=current_row, column=max_depth+1, value=product['name'])
             ws.cell(row=current_row, column=max_depth+2, value=product['quantity'])
             ws.cell(row=current_row, column=max_depth+3, value=product['profit'])
-            ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
-            ws.cell(row=current_row, column=max_depth+5, value=product['forecast'])
+            
+            # Записываем скорость продаж с форматированием
+            sales_speed_cell = ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
+            sales_speed_cell.number_format = '0.00'  # Форматирование для отображения двух знаков после запятой
+            
+            # Записываем прогноз с форматированием
+            forecast_cell = ws.cell(row=current_row, column=max_depth+5, value=product['forecast'])
+            forecast_cell.number_format = '0.00'  # Форматирование для отображения двух знаков после запятой
             
             # Вычисляем автоматический минимальный остаток (округление вверх прогноза)
             auto_min_stock = math.ceil(product['forecast'])
@@ -707,11 +724,11 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             manual_stock = get_manual_stock_value(product['uuid_path'])
             
             # Если есть ручное значение, сравниваем его с автоматическим и берем большее
-            min_stock_value = auto_min_stock  # По умолчанию используем автоматическое значение
+            min_stock_value = auto_min_stock
             if manual_stock is not None:
                 min_stock_value = max(auto_min_stock, manual_stock)
             
-            # Записываем итоговое знчение в ячейку
+            # Записываем итоговое значение в ячейку
             ws.cell(row=current_row, column=max_depth+6, value=min_stock_value)
             
             current_row += 1
