@@ -865,8 +865,200 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             wb.close()
             return None
             
-        # Продолжаем форматирование и сохранение файла...
-        # [оставшийся код функции без изменений]
+        print(f"Максимальная глубина групп: {max_depth}")
+
+        # Сортируем данные по полному пути групп по возрастанию
+        products_data.sort(key=lambda x: x['group_path'])
+
+        # Формируем заголовки с учетом реальной глубины, начиная со второго уровня
+        group_level_headers = [f'Уровень {i+2}' for i in range(max_depth-1)] if max_depth > 1 else []
+        headers = group_level_headers + [
+            'UUID',  # Изменено название столбца
+            'Наименование', 'Количество', 'Прибыльность', 'Скорость продаж', 
+            f'Прогноз на {planning_days} дней', 'Минимальный остаток'
+        ]
+        
+        # Записываем заголовки
+        for col, header in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(color="000000", bold=True)
+
+        # Находим текущее определение палитры цветов
+        color_palette = ['b7b7b7', 'cccccc', 'd9d9d9', 'efefef', 'f3f3f3']
+
+        # Заменяем на обратный порядок
+        color_palette = ['f3f3f3', 'efefef', 'd9d9d9', 'cccccc', 'b7b7b7']
+        
+        # Записываем данные с группами
+        current_row = 2
+        current_uuid_path = []
+        
+        def get_manual_stock_value(uuid_path):
+            if not manual_stock_settings:
+                return None
+                
+            try:
+                manual_settings = json.loads(manual_stock_settings)
+                max_stock = None
+                
+                # Проверяем каждую группу в пути товара
+                for group_uuid in uuid_path:
+                    for setting in manual_settings:
+                        if setting['group_id'] == group_uuid:
+                            setting_value = int(setting['min_stock'])
+                            print(f"Найдено значение {setting_value} для группы {group_uuid}")
+                            if max_stock is None or setting_value > max_stock:
+                                max_stock = setting_value
+                
+                return max_stock
+            except Exception as e:
+                print(f"Ошибка при обработке настроек минимальных остатков: {str(e)}")
+                return None
+
+        # При записи данных продукта
+        for product in products_data:
+            uuid_path = product['uuid_path']
+            names_by_level = product['names_by_level']
+            
+            # Записываем строки групп, если путь изменился
+            for i, uuid in enumerate(uuid_path):
+                if i >= len(current_uuid_path) or uuid != current_uuid_path[i]:
+                    if i > 0:
+                        ws.cell(row=current_row, column=i, value=names_by_level[i])
+                        color_index = min(i - 1, len(color_palette) - 1)
+                        fill_color = color_palette[color_index]
+                        for col in range(1, ws.max_column + 1):
+                            cell = ws.cell(row=current_row, column=col)
+                            cell.fill = PatternFill(start_color=fill_color, 
+                                                  end_color=fill_color, 
+                                                  fill_type='solid')
+                    
+                    if current_row > 2:
+                        uuid_cell = ws.cell(row=current_row, column=max_depth, value=uuid)
+                        uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
+                    current_row += 1
+            
+            # При записи UUID товара
+            if current_row > 2:
+                uuid_cell = ws.cell(row=current_row, column=max_depth)
+                if product['product_href']:
+                    uuid_cell.value = product['product_uuid']
+                    uuid_cell.hyperlink = product['product_href']
+                    uuid_cell.font = Font(color="0000FF", underline="single")
+                    uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
+            
+            # Записываем данные продукта
+            ws.cell(row=current_row, column=max_depth+1, value=product['name'])
+            ws.cell(row=current_row, column=max_depth+2, value=product['quantity'])
+            ws.cell(row=current_row, column=max_depth+3, value=product['profit'])
+            
+            # Записываем скорость продаж с форматированием
+            sales_speed_cell = ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
+            sales_speed_cell.number_format = '0.00'  # Форматирование для отображения двух знаков после запятой
+            
+            # Записываем прогноз с форматированием
+            forecast_cell = ws.cell(row=current_row, column=max_depth+5, value=product['forecast'])
+            forecast_cell.number_format = '0.00'  # Форматирование для отображения двух знаков после запятой
+            
+            # Вычисляем автоматический минимальный остаток (округление вверх прогноза)
+            auto_min_stock = math.ceil(product['forecast'])
+            
+            # Получаем ручное значение минимального остатка для всей иерархии групп товара
+            manual_stock = get_manual_stock_value(product['uuid_path'])
+            
+            # Если есть ручное значение, сравниваем его с автоматическим и берем большее
+            min_stock_value = auto_min_stock
+            if manual_stock is not None:
+                min_stock_value = max(auto_min_stock, manual_stock)
+            
+            # Записываем итоговое значение в ячейку
+            ws.cell(row=current_row, column=max_depth+6, value=min_stock_value)
+            
+            current_row += 1
+            current_uuid_path = uuid_path
+
+        # После записи всех данных и перед форматированием добавляем группировку
+        ws.sheet_properties.outlinePr.summaryBelow = False  # Устанавливаем кнопку группировки сверху
+
+        # Функция для определения диапазонов групп
+        def find_groups(ws, start_row, end_row, max_depth):
+            groups = []  # [(start_row, end_row, level, group_name)]
+            
+            # Проходим по каждой строке
+            for row in range(start_row, end_row + 1):
+                # Проверяем каждый уровень
+                for level in range(1, max_depth + 1):
+                    value = ws.cell(row=row, column=level).value
+                    if value is not None:
+                        # Находим конец группы (последнюю строку перед следующей группой того же или более высокого уровня)
+                        end_group_row = row
+                        for next_row in range(row + 1, end_row + 1):
+                            # Проверяем, не началась ли новая группа того же или более высокого уровня
+                            found_higher_level = False
+                            for check_level in range(1, level + 1):
+                                if ws.cell(row=next_row, column=check_level).value is not None:
+                                    found_higher_level = True
+                                    break
+                            if found_higher_level:
+                                end_group_row = next_row - 1
+                                break
+                            end_group_row = next_row
+                        
+                        groups.append((row, end_group_row, level, value))
+            
+            return groups
+
+        # Находим все группы
+        groups = find_groups(ws, 2, current_row - 1, max_depth)
+
+        # Сортируем группы по уровню (от большего к меньшему)
+        # и по позиции (сверху вниз)
+        groups.sort(key=lambda x: (-x[2], x[0]))
+
+        # Применяем группировку
+        for start_row, end_row, level, group_name in groups:
+            if start_row < end_row:  # Группируем если есть что группировать
+                # Группируем все строки под группой
+                for row in range(start_row + 1, end_row + 1):
+                    current_level = ws.row_dimensions[row].outline_level
+                    ws.row_dimensions[row].outline_level = current_level + 1 if current_level is not None else 1
+                    ws.row_dimensions[row].hidden = False
+
+        # Отключаем группировку для заголовка
+        ws.row_dimensions[1].outline_level = 0
+        
+        # Форматирование
+        ws.freeze_panes = 'A2'
+        
+        # Автоподбор ширины столбцов
+        for column in ws.columns:
+            column_letter = get_column_letter(column[0].column)
+            max_length = 0
+            column_letter = column[0].column_letter
+            
+            # Если это столбец "UUID" (max_depth)
+            if column[0].column == max_depth:
+                ws.column_dimensions[column_letter].width = 3
+                # Применяем настройки отображения ко всем ячейкам в столбце
+                for cell in column:
+                    if isinstance(cell.hyperlink, str):  # Если есть ссылка
+                        cell.font = Font(color="0000FF", underline="single")
+                    cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
+                continue
+
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2)
+            ws.column_dimensions[column_letter].width = adjusted_width
+
+        # После сбора всех данных и перед созданием заголовков
+        sheet_name = get_sheet_name(products_data)
+        ws.title = sheet_name
+        print(f"Название листа: {sheet_name}")
         
         filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         wb.save(filename)
