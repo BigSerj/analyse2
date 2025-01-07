@@ -161,7 +161,7 @@
     </style>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
-        window.productGroups = {{ product_groups_json|safe }};
+        window.productGroups = JSON.parse('{{ product_groups_json|safe }}');
 
         $(document).ready(function() {
             console.log('DOM Ready');
@@ -297,9 +297,26 @@
 
             // Добавляем обработчик отправки формы
             $('#reportForm').on('submit', function(e) {
-                e.preventDefault(); // Предотвращаем стандартную отправку формы
+                e.preventDefault();
                 
                 const formData = new FormData(this);
+                let eventSource = null;
+                
+                function startStatusStream() {
+                    if (eventSource) {
+                        eventSource.close();
+                    }
+                    eventSource = new EventSource('/status-stream');
+                    eventSource.onmessage = function(e) {
+                        $('#remainingCount').text(e.data);
+                        if (parseInt(e.data) <= 0) {
+                            eventSource.close();
+                        }
+                    };
+                    eventSource.onerror = function() {
+                        eventSource.close();
+                    };
+                }
                 
                 $.ajax({
                     url: '/process',
@@ -311,23 +328,36 @@
                         $('.loading').show();
                         $('.error-message').hide();
                         $('.success-message').hide();
+                        $('#remainingCount').text('...');
+                        startStatusStream();
                     },
                     success: function(response) {
                         if (response.success && response.file_url) {
-                            window.location.href = response.file_url;
+                            setTimeout(function() {
+                                if (eventSource) {
+                                    eventSource.close();
+                                }
+                                $('.loading').hide();
+                                window.location.href = response.file_url;
+                            }, 1000);
                         } else {
+                            if (eventSource) {
+                                eventSource.close();
+                            }
+                            $('.loading').hide();
                             $('.error-message').text('Ошибка при формировании отчета').show();
                         }
                     },
                     error: function(xhr, status, error) {
+                        if (eventSource) {
+                            eventSource.close();
+                        }
+                        $('.loading').hide();
                         let errorMessage = 'Произошла ошибка при формировании отчета';
                         if (xhr.responseJSON && xhr.responseJSON.error) {
                             errorMessage = xhr.responseJSON.error;
                         }
                         $('.error-message').text(errorMessage).show();
-                    },
-                    complete: function() {
-                        $('.loading').hide();
                     }
                 });
             });
@@ -342,6 +372,7 @@
                     <span class="visually-hidden">Загрузка...</span>
                 </div>
                 <p>Формирование отчета...</p>
+                <p>Осталось: <span id="remainingCount"></span></p>
             </div>
         </div>
         <div class="error-message" style="display: none;"></div>

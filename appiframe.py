@@ -23,6 +23,9 @@ BASE_URL = 'https://api.moysklad.ru/api/remap/1.2'
 processing_cancelled = False
 processing_lock = threading.Lock()
 
+# Добавим глобальную переменную для хранения статуса
+current_status = {'total': 0, 'processed': 0}
+
 def check_if_cancelled():
     """Проверяет, не была ли отменена обработка отчета"""
     global processing_cancelled
@@ -63,9 +66,10 @@ def iframe():
 @app.route('/process', methods=['POST'])
 def process():
     try:
-        global processing_cancelled
+        global processing_cancelled, current_status
         with processing_lock:
             processing_cancelled = False
+            current_status['processed'] = 0
         
         start_date = request.form['start_date']
         end_date = request.form['end_date']
@@ -84,9 +88,14 @@ def process():
         if not report_data or 'rows' not in report_data or not report_data['rows']:
             return jsonify({'error': 'Нет данных для формирования отчета'}), 404
         
+        current_status['total'] = len(report_data['rows'])
+        
         excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days, manual_stock_settings)
         
-        return jsonify({'success': True, 'file_url': f'/download/{excel_file}'})
+        return jsonify({
+            'success': True, 
+            'file_url': f'/download/{excel_file}'
+        })
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -568,6 +577,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         print("Начало создания Excel отчета")
         print(f"Полученные настройки минимальных остатков: {manual_stock_settings}")
         
+        global current_status
+        
         wb = Workbook()
         ws = wb.active
         
@@ -590,6 +601,9 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 sales_speed, group_uuid, group_name, product_uuid, product_href = get_sales_speed(
                     variant_id, store_id, start_date, end_date, is_variant
                 )
+                
+                # Увеличиваем счетчик обработанных записей
+                update_processed_count()
                 
                 # Изменяем условие: проверяем количество продаж вместо скорости
                 if item.get('sellQuantity', 0) > 0:  # Теперь проверяем количество продаж
@@ -876,6 +890,25 @@ def cancel_processing():
     with processing_lock:
         processing_cancelled = True
     return jsonify({'status': 'cancelled'})
+
+@app.route('/status-stream')
+def status_stream():
+    def generate():
+        last_processed = -1
+        while True:
+            with processing_lock:
+                remaining = current_status['total'] - current_status['processed']
+                if current_status['processed'] != last_processed:
+                    last_processed = current_status['processed']
+                    yield f"data: {remaining}\n\n"
+            if remaining <= 0:
+                break
+    return Response(generate(), mimetype='text/event-stream')
+
+def update_processed_count():
+    """Обновляет счетчик обработанных записей"""
+    with processing_lock:
+        current_status['processed'] += 1
 
 if __name__ == '__main__':
     print("Starting Flask iframe app...")
