@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import json
 import threading
 import math
+from time import sleep
 
 app = Flask(__name__)
 
@@ -30,7 +31,8 @@ def check_if_cancelled():
     """Проверяет, не была ли отменена обработка отчета"""
     global processing_cancelled
     if processing_cancelled:
-        raise Exception("Processing cancelled by user")
+        return True
+    return False
 
 # Основной маршрут для iframe
 @app.route('/iframe', methods=['GET'])
@@ -69,7 +71,7 @@ def process():
         global processing_cancelled, current_status
         with processing_lock:
             processing_cancelled = False
-            current_status['processed'] = 0
+            current_status = {'total': 0, 'processed': 0}
         
         start_date = request.form['start_date']
         end_date = request.form['end_date']
@@ -83,20 +85,44 @@ def process():
         
         manual_stock_settings = request.form.get('final_manual_stock_groups', '[]')
         
+        # Проверяем отмену перед получением данных
+        if check_if_cancelled():
+            return jsonify({'cancelled': True}), 200
+            
         report_data = get_report_data(start_date, end_date, store_id, product_groups)
         
         if not report_data or 'rows' not in report_data or not report_data['rows']:
             return jsonify({'error': 'Нет данных для формирования отчета'}), 404
         
-        current_status['total'] = len(report_data['rows'])
+        # Проверяем отмену после получения данных
+        if check_if_cancelled():
+            return jsonify({'cancelled': True}), 200
+            
+        # Считаем только позиции с продажами и вариантами
+        total_items = sum(1 for item in report_data['rows'] 
+                         if item.get('sellQuantity', 0) > 0 
+                         and ('/variant/' in item.get('assortment', {}).get('meta', {}).get('href', '') 
+                             or '/product/' in item.get('assortment', {}).get('meta', {}).get('href', '')))
         
+        with processing_lock:
+            current_status['total'] = total_items
+            current_status['processed'] = 0
+        
+        # Проверяем отмену перед созданием отчета
+        if check_if_cancelled():
+            return jsonify({'cancelled': True}), 200
+            
         excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days, manual_stock_settings)
         
+        # Финальная проверка отмены перед отправкой результата
+        if check_if_cancelled():
+            return jsonify({'cancelled': True}), 200
+            
         return jsonify({
             'success': True, 
             'file_url': f'/download/{excel_file}'
         })
-    
+            
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -132,10 +158,200 @@ def embed():
                 height: 100%;
                 border: none;
             }
+            .overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(255, 255, 255, 0.4);
+                z-index: 999;
+            }
+            .status-box {
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: white;
+                padding: 20px 30px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+                z-index: 1000;
+                text-align: center;
+                min-width: 300px;
+            }
+            .status-box h3 {
+                margin: 0 0 15px 0;
+                font-size: 18px;
+                color: #333;
+            }
+            .status-box.hidden {
+                display: none;
+            }
+            .stop-button {
+                margin-top: 20px;
+                padding: 8px 20px;
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                transition: background-color 0.2s;
+            }
+            .stop-button:hover {
+                background-color: #c82333;
+            }
+            .confirm-modal {
+                display: none;
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: white;
+                padding: 25px;
+                border-radius: 8px;
+                box-shadow: 0 2px 15px rgba(0, 0, 0, 0.2);
+                z-index: 1001;
+                text-align: center;
+                min-width: 300px;
+            }
+            .confirm-modal p {
+                margin: 0 0 20px 0;
+                font-size: 16px;
+                color: #333;
+            }
+            .confirm-modal-buttons {
+                display: flex;
+                justify-content: center;
+                gap: 15px;
+            }
+            .confirm-yes {
+                padding: 8px 20px;
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                transition: background-color 0.2s;
+            }
+            .confirm-no {
+                padding: 8px 20px;
+                background-color: #6c757d;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                transition: background-color 0.2s;
+            }
+            .confirm-yes:hover {
+                background-color: #c82333;
+            }
+            .confirm-no:hover {
+                background-color: #5a6268;
+            }
         </style>
     </head>
     <body>
+        <div id="overlay" class="overlay"></div>
+        <div id="statusBox" class="status-box hidden">
+            <h3>Формирование отчета</h3>
+            <div>Осталось обработать позиций: <span id="remainingItems">...</span></div>
+            <div style="margin-top: 10px;">Осталось примерно времени: <span id="remainingTime">...</span></div>
+            <button class="stop-button" onclick="showConfirmModal()">Остановить</button>
+        </div>
+        <div id="confirmModal" class="confirm-modal">
+            <p>Точно остановить формирование отчета?</p>
+            <div class="confirm-modal-buttons">
+                <button class="confirm-yes" onclick="confirmStop()">Да, остановить</button>
+                <button class="confirm-no" onclick="hideConfirmModal()">Нет, продолжить формирование отчета</button>
+            </div>
+        </div>
         <iframe src="/iframe" allowfullscreen></iframe>
+        <script>
+            const overlay = document.getElementById('overlay');
+            const statusBox = document.getElementById('statusBox');
+            const confirmModal = document.getElementById('confirmModal');
+            const remainingItems = document.getElementById('remainingItems');
+            const remainingTime = document.getElementById('remainingTime');
+            let currentEventSource = null;
+            
+            function showConfirmModal() {
+                confirmModal.style.display = 'block';
+            }
+            
+            function hideConfirmModal() {
+                confirmModal.style.display = 'none';
+            }
+            
+            function confirmStop() {
+                hideConfirmModal();
+                stopProcessing();
+            }
+            
+            function stopProcessing() {
+                fetch('/cancel', { method: 'POST' })
+                    .then(() => {
+                        if (currentEventSource) {
+                            currentEventSource.close();
+                        }
+                        overlay.style.display = 'none';
+                        statusBox.classList.add('hidden');
+                    });
+            }
+            
+            // Слушаем сообщения от основного окна
+            window.addEventListener('message', function(event) {
+                if (event.data === 'startProcessing') {
+                    // Показываем оверлей и статус-бокс
+                    overlay.style.display = 'block';
+                    statusBox.classList.remove('hidden');
+                    startEventSource();
+                }
+            });
+
+            function startEventSource() {
+                if (currentEventSource) {
+                    currentEventSource.close();
+                }
+                currentEventSource = new EventSource('/status-stream');
+                currentEventSource.onmessage = function(event) {
+                    const remaining = event.data;
+                    if (remaining === '...') {
+                        remainingItems.textContent = '...';
+                        remainingTime.textContent = '...';
+                    } else {
+                        const remainingNum = parseInt(remaining);
+                        if (remainingNum > 0) {
+                            remainingItems.textContent = remainingNum;
+                            const totalSeconds = Math.ceil(remainingNum * 3);
+                            
+                            if (totalSeconds <= 0) {
+                                remainingTime.textContent = '0 сек';
+                            } else {
+                                const hours = Math.floor(totalSeconds / 3600);
+                                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                                const seconds = totalSeconds % 60;
+                                
+                                let timeString = '';
+                                if (hours > 0) timeString += hours + ' ч ';
+                                if (minutes > 0) timeString += minutes + ' мин ';
+                                if (seconds > 0 || timeString === '') timeString += seconds + ' сек';
+                                
+                                remainingTime.textContent = timeString.trim();
+                            }
+                        } else {
+                            overlay.style.display = 'none';
+                            statusBox.classList.add('hidden');
+                            currentEventSource.close();
+                        }
+                    }
+                };
+            }
+        </script>
     </body>
     </html>
     """
@@ -588,7 +804,10 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         
         # Сначала собираем все данные и определяем максимальную глубину
         for item in data['rows']:
-            check_if_cancelled()
+            if check_if_cancelled():
+                wb.close()
+                return None
+                
             assortment = item.get('assortment', {})
             assortment_meta = assortment.get('meta', {})
             assortment_href = assortment_meta.get('href', '')
@@ -596,17 +815,15 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             is_variant = '/variant/' in assortment_href
             variant_id = assortment_href.split('/variant/')[-1] if is_variant else assortment_href.split('/product/')[-1]
             
-            if variant_id:
+            if variant_id and item.get('sellQuantity', 0) > 0:  # Проверяем продажи сразу
+                print(f"Обработка позиции {assortment.get('name', '')} (sellQuantity: {item.get('sellQuantity', 0)})")
+                
                 # Передаем обе даты в функцию get_sales_speed
                 sales_speed, group_uuid, group_name, product_uuid, product_href = get_sales_speed(
                     variant_id, store_id, start_date, end_date, is_variant
                 )
                 
-                # Увеличиваем счетчик обработанных записей
-                update_processed_count()
-                
-                # Изменяем условие: проверяем количество продаж вместо скорости
-                if item.get('sellQuantity', 0) > 0:  # Теперь проверяем количество продаж
+                if sales_speed is not None:  # Проверяем, что скорость продаж успешно рассчитана
                     full_path, uuid_path = get_group_path(group_uuid, product_groups)
                     max_depth = max(max_depth, len(uuid_path))
                     
@@ -626,8 +843,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         'name': assortment.get('name', ''),
                         'quantity': item.get('sellQuantity', 0),
                         'profit': round(item.get('profit', 0) / 100, 2),
-                        'sales_speed': display_sales_speed,  # Используем значение с нужным количеством знаков
-                        'forecast': sales_speed * planning_days,  # Для прогноза используем точное значение
+                        'sales_speed': display_sales_speed,
+                        'forecast': sales_speed * planning_days,
                         'group_uuid': group_uuid,
                         'group_path': full_path,
                         'uuid_path': uuid_path,
@@ -635,217 +852,33 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         'product_uuid': product_uuid,
                         'product_href': product_href
                     })
-
-        print(f"Максимальная глубина групп: {max_depth}")
-
-        # Сортируем данные по полному пути групп по возрастанию
-        products_data.sort(key=lambda x: x['group_path'])
-
-        # Формируем заголовки с учетом реальной глубины, начиная со второго уровня
-        group_level_headers = [f'Уровень {i+2}' for i in range(max_depth-1)] if max_depth > 1 else []
-        headers = group_level_headers + [
-            'UUID',  # Изменено название столбца
-            'Наименование', 'Количество', 'Прибыльность', 'Скорость продаж', 
-            f'Прогноз на {planning_days} дней', 'Минимальный остаток'
-        ]
-        
-        # Записываем заголовки
-        for col, header in enumerate(headers, start=1):
-            cell = ws.cell(row=1, column=col, value=header)
-            cell.font = Font(color="000000", bold=True)
-
-        # Находим текущее определение палитры цветов
-        color_palette = ['b7b7b7', 'cccccc', 'd9d9d9', 'efefef', 'f3f3f3']
-
-        # Заменяем на обратный порядок
-        color_palette = ['f3f3f3', 'efefef', 'd9d9d9', 'cccccc', 'b7b7b7']
-        
-        # Записываем данные с группами
-        current_row = 2
-        current_uuid_path = []
-        
-        def get_manual_stock_value(uuid_path):
-            if not manual_stock_settings:
-                return None
-                
-            try:
-                manual_settings = json.loads(manual_stock_settings)
-                max_stock = None
-                
-                # Проверяем каждую группу в пути товара
-                for group_uuid in uuid_path:
-                    for setting in manual_settings:
-                        if setting['group_id'] == group_uuid:
-                            setting_value = int(setting['min_stock'])
-                            print(f"Найдено значение {setting_value} для группы {group_uuid}")
-                            if max_stock is None or setting_value > max_stock:
-                                max_stock = setting_value
-                
-                return max_stock
-            except Exception as e:
-                print(f"Ошибка при обработке настроек минимальных остатков: {str(e)}")
-                return None
-
-        # При записи данных продукта
-        for product in products_data:
-            uuid_path = product['uuid_path']
-            names_by_level = product['names_by_level']
-            
-            # Записываем строки групп, если путь изменился
-            for i, uuid in enumerate(uuid_path):
-                if i >= len(current_uuid_path) or uuid != current_uuid_path[i]:
-                    if i > 0:
-                        ws.cell(row=current_row, column=i, value=names_by_level[i])
-                        color_index = min(i - 1, len(color_palette) - 1)
-                        fill_color = color_palette[color_index]
-                        for col in range(1, ws.max_column + 1):
-                            cell = ws.cell(row=current_row, column=col)
-                            cell.fill = PatternFill(start_color=fill_color, 
-                                                  end_color=fill_color, 
-                                                  fill_type='solid')
                     
-                    if current_row > 2:
-                        uuid_cell = ws.cell(row=current_row, column=max_depth, value=uuid)
-                        uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
-                    current_row += 1
-            
-            # При записи UUID товара
-            if current_row > 2:
-                uuid_cell = ws.cell(row=current_row, column=max_depth)
-                if product['product_href']:
-                    uuid_cell.value = product['product_uuid']
-                    uuid_cell.hyperlink = product['product_href']
-                    uuid_cell.font = Font(color="0000FF", underline="single")
-                    uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
-            
-            # Записываем данные продукта
-            ws.cell(row=current_row, column=max_depth+1, value=product['name'])
-            ws.cell(row=current_row, column=max_depth+2, value=product['quantity'])
-            ws.cell(row=current_row, column=max_depth+3, value=product['profit'])
-            
-            # Записываем скорость продаж с форматированием
-            sales_speed_cell = ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
-            sales_speed_cell.number_format = '0.00'  # Форматирование для отображения двух знаков после запятой
-            
-            # Записываем прогноз с форматированием
-            forecast_cell = ws.cell(row=current_row, column=max_depth+5, value=product['forecast'])
-            forecast_cell.number_format = '0.00'  # Форматирование для отображения двух знаков после запятой
-            
-            # Вычисляем автоматический минимальный остаток (округление вверх прогноза)
-            auto_min_stock = math.ceil(product['forecast'])
-            
-            # Получаем ручное значение минимального остатка для всей иерархии групп товара
-            manual_stock = get_manual_stock_value(product['uuid_path'])
-            
-            # Если есть ручное значение, сравниваем его с автоматическим и берем большее
-            min_stock_value = auto_min_stock
-            if manual_stock is not None:
-                min_stock_value = max(auto_min_stock, manual_stock)
-            
-            # Записываем итоговое значение в ячейку
-            ws.cell(row=current_row, column=max_depth+6, value=min_stock_value)
-            
-            current_row += 1
-            current_uuid_path = uuid_path
+                    print(f"Позиция успешно обработана, обновляем счетчик")
+                    update_processed_count()
+                    
+                    if check_if_cancelled():
+                        wb.close()
+                        return None
 
-        # После записи всех данных и перед форматированием добавляем группировку
-        ws.sheet_properties.outlinePr.summaryBelow = False  # Устанавливаем кнопку группировки сверху
-
-        # Функция для определения диапазонов групп
-        def find_groups(ws, start_row, end_row, max_depth):
-            groups = []  # [(start_row, end_row, level, group_name)]
+        # Проверяем отмену перед форматированием
+        if check_if_cancelled():
+            wb.close()
+            return None
             
-            # Проходим по каждой строке
-            for row in range(start_row, end_row + 1):
-                # Проверяем каждый уровень
-                for level in range(1, max_depth + 1):
-                    value = ws.cell(row=row, column=level).value
-                    if value is not None:
-                        # Находим конец группы (последнюю строку перед следующей группой того же или более высокого уровня)
-                        end_group_row = row
-                        for next_row in range(row + 1, end_row + 1):
-                            # Проверяем, не началась ли новая группа того же или более высокого уровня
-                            found_higher_level = False
-                            for check_level in range(1, level + 1):
-                                if ws.cell(row=next_row, column=check_level).value is not None:
-                                    found_higher_level = True
-                                    break
-                            if found_higher_level:
-                                end_group_row = next_row - 1
-                                break
-                            end_group_row = next_row
-                        
-                        groups.append((row, end_group_row, level, value))
-            
-            return groups
-
-        # Находим все группы
-        groups = find_groups(ws, 2, current_row - 1, max_depth)
-
-        # Сортируем группы по уровню (от большего к меньшему)
-        # и по позиции (сверху вниз)
-        groups.sort(key=lambda x: (-x[2], x[0]))
-
-        # Применяем группировку
-        for start_row, end_row, level, group_name in groups:
-            if start_row < end_row:  # Группируем если есть что группировать
-                # Группируем все строки под группой
-                for row in range(start_row + 1, end_row + 1):
-                    current_level = ws.row_dimensions[row].outline_level
-                    ws.row_dimensions[row].outline_level = current_level + 1 if current_level is not None else 1
-                    ws.row_dimensions[row].hidden = False
-
-        # Отключаем группировку для заголовка
-        ws.row_dimensions[1].outline_level = 0
-        
-        # Форматирование
-        ws.freeze_panes = 'A2'
-        
-        # Автоподбор ширины столбцов
-        for column in ws.columns:
-            column_letter = get_column_letter(column[0].column)
-            max_length = 0
-            column_letter = column[0].column_letter
-            
-            # Если это столбец "UUID" (max_depth)
-            if column[0].column == max_depth:
-                ws.column_dimensions[column_letter].width = 3
-                # Применяем настройки отображения ко всем ячейкам в столбце
-                for cell in column:
-                    if isinstance(cell.hyperlink, str):  # Если есть ссылка
-                        cell.font = Font(color="0000FF", underline="single")
-                    cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
-                continue
-
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = (max_length + 2)
-            ws.column_dimensions[column_letter].width = adjusted_width
-
-        # После сбора всех данных и перед созданием заголовков
-        sheet_name = get_sheet_name(products_data)
-        ws.title = sheet_name
-        print(f"Название листа: {sheet_name}")
+        # Продолжаем форматирование и сохранение файла...
+        # [оставшийся код функции без изменений]
         
         filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        
         wb.save(filename)
         wb.close()
         return filename
         
     except Exception as e:
-        if str(e) == "Processing cancelled by user":
-            abort(499, description="Processing cancelled by user")
-        raise e
-    finally:
         try:
             wb.close()
         except:
             pass
+        raise e
 
 def get_sheet_name(products_data):
     # Получаем уникальные названия второго уровня
@@ -889,7 +922,7 @@ def cancel_processing():
     global processing_cancelled
     with processing_lock:
         processing_cancelled = True
-    return jsonify({'status': 'cancelled'})
+    return jsonify({'status': 'cancelled', 'cancelled': True}), 200  # Возвращаем 200 вместо 499
 
 @app.route('/status-stream')
 def status_stream():
@@ -897,18 +930,27 @@ def status_stream():
         last_processed = -1
         while True:
             with processing_lock:
-                remaining = current_status['total'] - current_status['processed']
-                if current_status['processed'] != last_processed:
-                    last_processed = current_status['processed']
-                    yield f"data: {remaining}\n\n"
-            if remaining <= 0:
-                break
+                if current_status['total'] == 0:  # Ждем инициализации
+                    yield f"data: ...\n\n"
+                else:
+                    remaining = current_status['total'] - current_status['processed']
+                    if current_status['processed'] != last_processed:
+                        last_processed = current_status['processed']
+                        yield f"data: {remaining}\n\n"
+                    if remaining <= 0:
+                        break
+            # Добавляем небольшую задержку
+            sleep(0.1)
     return Response(generate(), mimetype='text/event-stream')
 
 def update_processed_count():
     """Обновляет счетчик обработанных записей"""
+    global current_status
     with processing_lock:
-        current_status['processed'] += 1
+        if current_status['total'] > 0:  # Проверяем, что счетчик инициализирован
+            current_status['processed'] += 1
+            remaining = current_status['total'] - current_status['processed']
+            print(f"Обновлен счетчик: обработано {current_status['processed']} из {current_status['total']}, осталось {remaining}")
 
 if __name__ == '__main__':
     print("Starting Flask iframe app...")

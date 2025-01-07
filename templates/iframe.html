@@ -295,9 +295,17 @@
                 console.log('Updated selected groups:', selectedGroups);
             }
 
-            // Добавляем обработчик отправки формы
+            // Обработчик отправки формы
             $('#reportForm').on('submit', function(e) {
                 e.preventDefault();
+                
+                // Отправляем сообщение родительскому окну о начале обработки
+                window.parent.postMessage('startProcessing', '*');
+                
+                // Показываем индикатор загрузки
+                $('.loading').show();
+                $('.error-message').hide();
+                $('.success-message').hide();
                 
                 const formData = new FormData(this);
                 let eventSource = null;
@@ -308,16 +316,29 @@
                     }
                     eventSource = new EventSource('/status-stream');
                     eventSource.onmessage = function(e) {
-                        $('#remainingCount').text(e.data);
-                        if (parseInt(e.data) <= 0) {
-                            eventSource.close();
-                        }
+                        updateRemainingCount(e.data);
                     };
                     eventSource.onerror = function() {
                         eventSource.close();
                     };
                 }
                 
+                function stopProcessing() {
+                    fetch('/cancel', { method: 'POST' })
+                        .then(() => {
+                            if (eventSource) {
+                                eventSource.close();
+                            }
+                            // Очищаем все состояния загрузки
+                            $('.loading').hide();
+                            $('.error-message').hide();
+                            $('.success-message').hide();
+                            // Сбрасываем счетчики
+                            $('#remainingCount').text('');
+                            $('#remainingTime').text('');
+                        });
+                }
+
                 $.ajax({
                     url: '/process',
                     type: 'POST',
@@ -332,7 +353,12 @@
                         startStatusStream();
                     },
                     success: function(response) {
-                        if (response.success && response.file_url) {
+                        if (response.cancelled) {
+                            if (eventSource) {
+                                eventSource.close();
+                            }
+                            $('.loading').hide();
+                        } else if (response.success && response.file_url) {
                             setTimeout(function() {
                                 if (eventSource) {
                                     eventSource.close();
@@ -353,6 +379,12 @@
                             eventSource.close();
                         }
                         $('.loading').hide();
+                        
+                        if (xhr.responseJSON && xhr.responseJSON.cancelled) {
+                            // Если это отмена, не показываем ошибку
+                            return;
+                        }
+                        
                         let errorMessage = 'Произошла ошибка при формировании отчета';
                         if (xhr.responseJSON && xhr.responseJSON.error) {
                             errorMessage = xhr.responseJSON.error;
@@ -361,6 +393,42 @@
                     }
                 });
             });
+
+            function updateRemainingCount(count) {
+                const remainingCount = document.getElementById('remainingCount');
+                const remainingTime = document.getElementById('remainingTime');
+                
+                if (count === '...') {
+                    remainingCount.textContent = '...';
+                    remainingTime.textContent = '...';
+                } else {
+                    const numCount = parseInt(count);
+                    if (!isNaN(numCount) && numCount >= 0) {
+                        remainingCount.textContent = numCount + '';
+                        
+                        // Calculate estimated time (3 seconds per position)
+                        const totalSeconds = Math.max(0, numCount * 3);
+                        
+                        if (totalSeconds <= 0) {
+                            remainingTime.textContent = '0';
+                        } else {
+                            const hours = Math.floor(totalSeconds / 3600);
+                            const minutes = Math.floor((totalSeconds % 3600) / 60);
+                            const seconds = totalSeconds % 60;
+                            
+                            let timeString = '';
+                            if (hours > 0) timeString += hours + ' ч ';
+                            if (minutes > 0) timeString += minutes + ' мин ';
+                            if (seconds > 0) timeString += seconds + ' сек';
+                            
+                            remainingTime.textContent = timeString.trim();
+                        }
+                    } else {
+                        remainingCount.textContent = '0';
+                        remainingTime.textContent = '0';
+                    }
+                }
+            }
         });
     </script>
 </head>
@@ -371,8 +439,6 @@
                 <div class="spinner-border text-primary" role="status">
                     <span class="visually-hidden">Загрузка...</span>
                 </div>
-                <p>Формирование отчета...</p>
-                <p>Осталось: <span id="remainingCount"></span></p>
             </div>
         </div>
         <div class="error-message" style="display: none;"></div>
