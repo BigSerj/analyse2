@@ -130,7 +130,7 @@ def process():
 @app.route('/download/<filename>')
 def download_file(filename):
     try:
-        return send_file(filename, as_attachment=True, download_name='profitability_report.xlsx')
+        return send_file(filename, as_attachment=True, download_name=filename)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -825,16 +825,43 @@ def calculate_group_quantities(products_data):
 
     return group_quantities
 
+def calculate_group_profits(products_data):
+    """
+    Рассчитывает среднюю прибыльность для каждой группы на основе всех товаров в ней
+    и её подгруппах.
+    """
+    group_profits = {}  # uuid -> (total_profit, count)
+
+    # Сначала собираем все товары по группам
+    for product in products_data:
+        # Для каждого уровня в пути группы
+        for i in range(len(product['uuid_path'])):
+            group_uuid = product['uuid_path'][i]
+            if group_uuid not in group_profits:
+                group_profits[group_uuid] = [0, 0]  # [сумма прибыли, количество товаров]
+            # Добавляем прибыль товара и увеличиваем счетчик
+            group_profits[group_uuid][0] += product['profit']
+            group_profits[group_uuid][1] += 1
+
+    # Вычисляем средние значения
+    average_profits = {}
+    for group_uuid, (total_profit, count) in group_profits.items():
+        average_profits[group_uuid] = round(total_profit / count, 2) if count > 0 else 0
+
+    return average_profits
+
 def create_hierarchical_sort_key(product):
     """
     Создает ключ сортировки, который обеспечивает правильное иерархическое отображение.
-    Каждый уровень в пути будет отсортирован отдельно.
+    Сортирует группы по возрастанию названия.
     """
     path_components = []
-    for i, uuid in enumerate(product['uuid_path']):
-        # Для каждого уровня создаем кортеж из (уровень, uuid)
-        # Это обеспечит сортировку сначала по уровню, затем по uuid внутри уровня
-        path_components.append((i, uuid))
+    names_by_level = product['names_by_level']
+    
+    for i, (uuid, name) in enumerate(zip(product['uuid_path'], names_by_level)):
+        # Создаем кортеж из уровня, имени и uuid для сортировки
+        path_components.append((i, name, uuid))
+    
     return path_components
 
 def create_excel_report(data, store_id, start_date, end_date, planning_days, manual_stock_settings=None):
@@ -846,6 +873,9 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         
         wb = Workbook()
         ws = wb.active
+        
+        # Определяем палитру цветов в начале
+        color_palette = ['f3f3f3', 'efefef', 'd9d9d9', 'cccccc', 'b7b7b7']
         
         product_groups = get_product_groups()
         products_data = []
@@ -916,8 +946,9 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             
         print(f"Максимальная глубина групп: {max_depth}")
 
-        # Рассчитываем количества для всех групп
+        # Рассчитываем количества и среднюю прибыльность для всех групп
         group_quantities = calculate_group_quantities(products_data)
+        group_profits = calculate_group_profits(products_data)
 
         # Сортируем данные с использованием иерархического ключа
         products_data.sort(key=create_hierarchical_sort_key)
@@ -927,7 +958,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         headers = group_level_headers + [
             'UUID',  # Изменено название столбца
             'Наименование', 'Количество', 'Прибыльность', 'Скорость продаж', 
-            f'Прогноз на {planning_days} дней', 'Минимальный остаток'
+            '30', 'Мин.остаток'
         ]
         
         # Записываем заголовки
@@ -935,37 +966,12 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             cell = ws.cell(row=1, column=col, value=header)
             cell.font = Font(color="000000", bold=True)
 
-        # Находим текущее определение палитры цветов
-        color_palette = ['f3f3f3', 'efefef', 'd9d9d9', 'cccccc', 'b7b7b7']
-        
-        # Записываем данные с группами
+        # Инициализируем current_row здесь
         current_row = 2
         current_uuid_path = []
         written_groups = set()  # Множество для отслеживания уже записанных групп
-        
-        def get_manual_stock_value(uuid_path):
-            if not manual_stock_settings:
-                return None
-                
-            try:
-                manual_settings = json.loads(manual_stock_settings)
-                max_stock = None
-                
-                # Проверяем каждую группу в пути товара
-                for group_uuid in uuid_path:
-                    for setting in manual_settings:
-                        if setting['group_id'] == group_uuid:
-                            setting_value = int(setting['min_stock'])
-                            print(f"Найдено значение {setting_value} для группы {group_uuid}")
-                            if max_stock is None or setting_value > max_stock:
-                                max_stock = setting_value
-                
-                return max_stock
-            except Exception as e:
-                print(f"Ошибка при обработке настроек минимальных остатков: {str(e)}")
-                return None
 
-        # При записи данных продукта
+        # Сначала записываем все данные
         for product in products_data:
             uuid_path = product['uuid_path']
             names_by_level = product['names_by_level']
@@ -978,6 +984,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         ws.cell(row=current_row, column=i, value=names_by_level[i])
                         # Записываем количество для группы
                         ws.cell(row=current_row, column=max_depth+2, value=group_quantities.get(uuid, 0))
+                        # Записываем среднюю прибыльность для группы
+                        ws.cell(row=current_row, column=max_depth+3, value=group_profits.get(uuid, 0))
                         color_index = min(i - 1, len(color_palette) - 1)
                         fill_color = color_palette[color_index]
                         for col in range(1, ws.max_column + 1):
@@ -1005,31 +1013,33 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             ws.cell(row=current_row, column=max_depth+1, value=product['name'])
             ws.cell(row=current_row, column=max_depth+2, value=product['quantity'])
             ws.cell(row=current_row, column=max_depth+3, value=product['profit'])
-            
-            # Записываем скорость продаж с форматированием
-            sales_speed_cell = ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
-            sales_speed_cell.number_format = '0.00'  # Форматирование для отображения двух знаков после запятой
-            
-            # Записываем прогноз с форматированием
-            forecast_cell = ws.cell(row=current_row, column=max_depth+5, value=product['forecast'])
-            forecast_cell.number_format = '0.00'  # Форматирование для отображения двух знаков после запятой
-            
-            # Вычисляем автоматический минимальный остаток (округление вверх прогноза)
-            auto_min_stock = math.ceil(product['forecast'])
-            
-            # Получаем ручное значение минимального остатка для всей иерархии групп товара
-            manual_stock = get_manual_stock_value(product['uuid_path'])
-            
-            # Если есть ручное значение, сравниваем его с автоматическим и берем большее
-            min_stock_value = auto_min_stock
-            if manual_stock is not None:
-                min_stock_value = max(auto_min_stock, manual_stock)
-            
-            # Записываем итоговое значение в ячейку
-            ws.cell(row=current_row, column=max_depth+6, value=min_stock_value)
+            ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
             
             current_row += 1
             current_uuid_path = uuid_path
+
+        # Теперь, когда у нас есть все данные, добавляем формулы
+        name_col = get_column_letter(max_depth+1)  # Столбец "Наименование"
+        speed_col = get_column_letter(max_depth+4)  # Столбец "Скорость продаж"
+        forecast_col = get_column_letter(max_depth+5)  # Столбец "30"
+        round_col = get_column_letter(max_depth+6)  # Столбец для округления вверх
+        
+        # Устанавливаем значение 30 в первой ячейке столбца forecast
+        ws.cell(row=1, column=max_depth+5, value=30)
+        
+        # Добавляем формулы в каждую строку, где есть значение в столбце "Наименование"
+        for row in range(2, current_row):
+            name_cell = ws.cell(row=row, column=max_depth+1).value
+            if name_cell:
+                # Формула для столбца "30" с абсолютной ссылкой на ячейку с числом
+                forecast_formula = f'={speed_col}{row}*{forecast_col}$1'
+                forecast_cell = ws.cell(row=row, column=max_depth+5, value=forecast_formula)
+                forecast_cell.number_format = '0.00'
+                
+                # Формула для столбца округления вверх
+                round_formula = f'=CEILING({forecast_col}{row})'
+                round_cell = ws.cell(row=row, column=max_depth+6, value=round_formula)
+                round_cell.number_format = '0'
 
         # После записи всех данных и перед форматированием добавляем группировку
         ws.sheet_properties.outlinePr.summaryBelow = False  # Устанавливаем кнопку группировки сверху
@@ -1084,12 +1094,31 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         # Форматирование
         ws.freeze_panes = 'A2'
         
+        # Устанавливаем фиксированную ширину для столбцов "30" и следующего за ним
+        forecast_col_letter = get_column_letter(max_depth+5)  # Столбец "30"
+        round_col_letter = get_column_letter(max_depth+6)  # Следующий столбец
+        ws.column_dimensions[forecast_col_letter].width = 14
+        ws.column_dimensions[round_col_letter].width = 14
+
+        # Центрируем заголовки в указанных столбцах
+        quantity_col = get_column_letter(max_depth+2)  # Столбец "Количество"
+        profit_col = get_column_letter(max_depth+3)  # Столбец "Прибыльность"
+        speed_col = get_column_letter(max_depth+4)  # Столбец "Скорость продаж"
+        
+        for col_letter in [quantity_col, profit_col, speed_col, forecast_col_letter, round_col_letter]:
+            header_cell = ws.cell(row=1, column=ws[col_letter + '1'].column)
+            header_cell.alignment = Alignment(horizontal='center')
+        
         # Автоподбор ширины столбцов
         for column in ws.columns:
             column_letter = get_column_letter(column[0].column)
             max_length = 0
             column_letter = column[0].column_letter
             
+            # Пропускаем столбцы с фиксированной шириной
+            if column[0].column in [max_depth+5, max_depth+6]:  # Столбцы "30" и следующий
+                continue
+                
             # Если это столбец "UUID" (max_depth)
             if column[0].column == max_depth:
                 ws.column_dimensions[column_letter].width = 3
@@ -1114,7 +1143,27 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         ws.title = sheet_name
         print(f"Название листа: {sheet_name}")
         
-        filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        # Форматируем даты для имени файла
+        start_date_obj = datetime.strptime(start_date, '%Y-%m-%d')
+        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
+        start_date_formatted = start_date_obj.strftime('%d.%m.%y')
+        end_date_formatted = end_date_obj.strftime('%d.%m.%y')
+        
+        # Получаем название группы товаров (первое название из второго уровня)
+        product_group_name = ''
+        for product in products_data:
+            names_by_level = product['names_by_level']
+            if len(names_by_level) > 1 and names_by_level[1]:  # Если есть второй уровень
+                product_group_name = names_by_level[1]
+                break
+        
+        # Получаем название магазина
+        stores = get_stores()
+        store_name = next((store['name'] for store in stores if store['id'] == store_id), store_id)
+        
+        # Формируем имя файла
+        filename = f"{start_date_formatted}-{end_date_formatted} - {product_group_name} - {store_name}.xlsx"
+        
         wb.save(filename)
         wb.close()
         return filename

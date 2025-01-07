@@ -62,9 +62,9 @@ def index():
             if not report_data or 'rows' not in report_data or not report_data['rows']:
                 return "Нет данных для формирования отчета для выбранных параметров", 404
             
-            excel_file = create_excel_report(report_data, store_id, end_date, planning_days, manual_stock_settings)
+            excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days, manual_stock_settings)
             
-            return send_file(excel_file, as_attachment=True, download_name='profitability_report.xlsx')
+            return send_file(excel_file, as_attachment=True, download_name=excel_file)
         except Exception as e:
             print(f"Error in index(): {str(e)}")
             return f"Произошла ошибка при формировании отчета: {str(e)}", 500
@@ -205,7 +205,7 @@ def get_stores():
         stores = response.json()['rows']
         return [{'id': store['id'], 'name': store['name']} for store in stores]
     else:
-        error_message = f"Ошибка пр�� получении списка складов: {response.status_code}. Ответ сервера: {response.text}"
+        error_message = f"Ошибка при получении списка складов: {response.status_code}. Ответ сервера: {response.text}"
         print(error_message)  # Выводим ошибку в консоль для отладки
         raise Exception(error_message)
     
@@ -447,7 +447,7 @@ def get_sheet_name(products_data):
     # Если название пустое, используем значение по умолчанию 
     return sheet_name if sheet_name else "Отчет прибльности"
 
-def create_excel_report(data, store_id, end_date, planning_days, manual_stock_settings=None):
+def create_excel_report(data, store_id, start_date, end_date, planning_days, manual_stock_settings=None):
     try:
         print("Начало создания Excel отчета")
         print(f"Полученные настройки минимальных остатков: {manual_stock_settings}")  # Для отладки
@@ -653,7 +653,6 @@ def create_excel_report(data, store_id, end_date, planning_days, manual_stock_se
         
         # Автоподбор ширины столбцов
         for column in ws.columns:
-            max_length = 0
             column_letter = column[0].column_letter
             
             # Если это столбец "UUID" (max_depth)
@@ -664,6 +663,11 @@ def create_excel_report(data, store_id, end_date, planning_days, manual_stock_se
                     if isinstance(cell.hyperlink, str):  # Если есть ссылка
                         cell.font = Font(color="0000FF", underline="single")
                     cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
+                continue
+            
+            # Если это столбец "Минимальный остаток" (max_depth+6)
+            if column[0].column == max_depth+6:
+                ws.column_dimensions[column_letter].width = 22
                 continue
                 
             for cell in column:
@@ -680,7 +684,12 @@ def create_excel_report(data, store_id, end_date, planning_days, manual_stock_se
         ws.title = sheet_name
         print(f"Название листа: {sheet_name}")
         
-        filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        # Получаем название магазина
+        stores = get_stores()
+        store_name = next((store['name'] for store in stores if store['id'] == store_id), store_id)
+        
+        # Формируем имя файла
+        filename = f"{start_date_formatted}-{end_date_formatted} - {product_group_name} - {store_name}.xlsx"
         
         wb.save(filename)
         wb.close()
@@ -708,6 +717,13 @@ def get_names_by_uuid(uuid_path, product_groups):
         return None
 
     return [find_name_by_uuid(product_groups, uuid) or '' for uuid in uuid_path]
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    try:
+        return send_file(filename, as_attachment=True, download_name=filename)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     print("Starting Flask app...")
