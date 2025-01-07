@@ -600,7 +600,14 @@ def get_report_data(start_date, end_date, store_id, product_groups):
             full_url = f"{url}?{query_string}"
             print(f"Отправляем запрос: URL={full_url}, Headers={headers}")
             
-            response = requests.get(full_url, headers=headers)
+            try:
+                response = requests.get(full_url, headers=headers, timeout=30)
+            except requests.exceptions.Timeout:
+                print("Timeout при получении данных отчета")
+                raise Exception("Timeout при получении данных отчета")
+            except requests.exceptions.RequestException as e:
+                print(f"Ошибка при получении данных отчета: {str(e)}")
+                raise e
             
             if response.status_code != 200:
                 error_message = f"Ошибка при получении данных: {response.status_code}. Ответ сервера: {response.text}"
@@ -663,13 +670,24 @@ def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     
     print(f"Запрос для получения операций: URL={full_url}")
     
-    response = requests.get(full_url, headers=headers)
+    try:
+        response = requests.get(full_url, headers=headers, timeout=30)
+    except requests.exceptions.Timeout:
+        print(f"Timeout при запросе операций для варианта {variant_id}")
+        return 0, '', '', '', ''
+    except requests.exceptions.RequestException as e:
+        print(f"Ошибка при запросе операций для варианта {variant_id}: {str(e)}")
+        return 0, '', '', '', ''
+        
     if response.status_code != 200:
         print(f"Ошибка при получении данных: {response.status_code}. Ответ сервера: {response.text}")
         return 0, '', '', '', ''
 
     data = response.json()
-    
+    if not data or 'rows' not in data:
+        print(f"Получен пустой ответ для варианта {variant_id}")
+        return 0, '', '', '', ''
+        
     # Фильтруем строки для нужной модификации
     rows = [
         row for row in data.get('rows', [])
@@ -788,6 +806,37 @@ def get_group_path(group_uuid, product_groups, get_uuid=False):
     names_path, uuid_path = path
     return ('/'.join(names_path), uuid_path) if not get_uuid else ('/'.join(uuid_path), uuid_path)
 
+def calculate_group_quantities(products_data):
+    """
+    Рассчитывает суммарное количество для каждой группы на основе всех товаров в ней
+    и её подгруппах.
+    """
+    group_quantities = {}  # uuid -> quantity
+
+    # Сначала собираем все товары по группам
+    for product in products_data:
+        # Для каждого уровня в пути группы
+        for i in range(len(product['uuid_path'])):
+            group_uuid = product['uuid_path'][i]
+            if group_uuid not in group_quantities:
+                group_quantities[group_uuid] = 0
+            # Добавляем количество товара к каждой группе в пути
+            group_quantities[group_uuid] += product['quantity']
+
+    return group_quantities
+
+def create_hierarchical_sort_key(product):
+    """
+    Создает ключ сортировки, который обеспечивает правильное иерархическое отображение.
+    Каждый уровень в пути будет отсортирован отдельно.
+    """
+    path_components = []
+    for i, uuid in enumerate(product['uuid_path']):
+        # Для каждого уровня создаем кортеж из (уровень, uuid)
+        # Это обеспечит сортировку сначала по уровню, затем по uuid внутри уровня
+        path_components.append((i, uuid))
+    return path_components
+
 def create_excel_report(data, store_id, start_date, end_date, planning_days, manual_stock_settings=None):
     try:
         print("Начало создания Excel отчета")
@@ -867,8 +916,11 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             
         print(f"Максимальная глубина групп: {max_depth}")
 
-        # Сортируем данные по полному пути групп по возрастанию
-        products_data.sort(key=lambda x: x['group_path'])
+        # Рассчитываем количества для всех групп
+        group_quantities = calculate_group_quantities(products_data)
+
+        # Сортируем данные с использованием иерархического ключа
+        products_data.sort(key=create_hierarchical_sort_key)
 
         # Формируем заголовки с учетом реальной глубины, начиная со второго уровня
         group_level_headers = [f'Уровень {i+2}' for i in range(max_depth-1)] if max_depth > 1 else []
@@ -884,14 +936,12 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             cell.font = Font(color="000000", bold=True)
 
         # Находим текущее определение палитры цветов
-        color_palette = ['b7b7b7', 'cccccc', 'd9d9d9', 'efefef', 'f3f3f3']
-
-        # Заменяем на обратный порядок
         color_palette = ['f3f3f3', 'efefef', 'd9d9d9', 'cccccc', 'b7b7b7']
         
         # Записываем данные с группами
         current_row = 2
         current_uuid_path = []
+        written_groups = set()  # Множество для отслеживания уже записанных групп
         
         def get_manual_stock_value(uuid_path):
             if not manual_stock_settings:
@@ -922,9 +972,12 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             
             # Записываем строки групп, если путь изменился
             for i, uuid in enumerate(uuid_path):
-                if i >= len(current_uuid_path) or uuid != current_uuid_path[i]:
+                group_key = f"{i}_{uuid}"  # Создаем уникальный ключ для группы с учетом уровня
+                if (i >= len(current_uuid_path) or uuid != current_uuid_path[i]) and group_key not in written_groups:
                     if i > 0:
                         ws.cell(row=current_row, column=i, value=names_by_level[i])
+                        # Записываем количество для группы
+                        ws.cell(row=current_row, column=max_depth+2, value=group_quantities.get(uuid, 0))
                         color_index = min(i - 1, len(color_palette) - 1)
                         fill_color = color_palette[color_index]
                         for col in range(1, ws.max_column + 1):
@@ -937,6 +990,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         uuid_cell = ws.cell(row=current_row, column=max_depth, value=uuid)
                         uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
                     current_row += 1
+                    written_groups.add(group_key)
             
             # При записи UUID товара
             if current_row > 2:
