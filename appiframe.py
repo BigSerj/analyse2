@@ -627,12 +627,47 @@ def get_report_data(start_date, end_date, store_id, product_groups):
             
             params['offset'] += params['limit']
         
+        # Собираем все variant_ids для одного запроса
+        variant_ids = []
+        for item in data.get('rows', []):
+            assortment = item.get('assortment', {})
+            assortment_meta = assortment.get('meta', {})
+            assortment_href = assortment_meta.get('href', '')
+            
+            is_variant = '/variant/' in assortment_href
+            variant_id = assortment_href.split('/variant/')[-1] if is_variant else assortment_href.split('/product/')[-1]
+            if variant_id:
+                variant_ids.append(variant_id)
+        
+        # Делаем один запрос для всех вариантов
+        operations_data = get_bulk_operations(variant_ids, store_id, start_date, end_date)
+        
         return {'meta': data.get('meta', {}), 'rows': all_rows}
         
     except Exception as e:
         if str(e) == "Processing cancelled by user":
             abort(499, description="Processing cancelled by user")
         raise e
+
+def get_bulk_operations(variant_ids, store_id, start_date, end_date):
+    url = f"{BASE_URL}/report/turnover/byoperations"
+    headers = {
+        'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
+        'Accept': 'application/json;charset=utf-8'
+    }
+    
+    # Формируем фильтр для всех вариантов через OR
+    variant_filters = [f"variant={BASE_URL}/entity/variant/{vid}" for vid in variant_ids]
+    filter_query = " || ".join(variant_filters)
+    
+    params = {
+        'momentFrom': start_date,
+        'momentTo': end_date,
+        'filter': f"store={BASE_URL}/entity/store/{store_id};({filter_query})",
+        'limit': 1000
+    }
+    
+    return requests.get(url, headers=headers, params=params).json()
 
 def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     url = f"{BASE_URL}/report/turnover/byoperations"
@@ -1013,7 +1048,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             ws.cell(row=current_row, column=max_depth+1, value=product['name'])
             ws.cell(row=current_row, column=max_depth+2, value=product['quantity'])
             ws.cell(row=current_row, column=max_depth+3, value=product['profit'])
-            ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
+            speed_cell = ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
+            speed_cell.number_format = '0.00'
             
             current_row += 1
             current_uuid_path = uuid_path
@@ -1039,7 +1075,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 # Формула для столбца округления вверх
                 round_formula = f'=CEILING({forecast_col}{row})'
                 round_cell = ws.cell(row=row, column=max_depth+6, value=round_formula)
-                round_cell.number_format = '0'
+                round_cell.number_format = '0.00'
 
         # После записи всех данных и перед форматированием добавляем группировку
         ws.sheet_properties.outlinePr.summaryBelow = False  # Устанавливаем кнопку группировки сверху
