@@ -921,6 +921,56 @@ def calculate_group_profits(products_data):
 
     return average_profits
 
+def calculate_group_sales_speed(products_data):
+    """
+    Рассчитывает среднюю скорость продаж для каждой группы на основе всех товаров в ней
+    и её подгруппах.
+    """
+    group_speeds = {}  # uuid -> (total_speed, count)
+
+    # Сначала собираем все товары по группам
+    for product in products_data:
+        # Для каждого уровня в пути группы
+        for i in range(len(product['uuid_path'])):
+            group_uuid = product['uuid_path'][i]
+            if group_uuid not in group_speeds:
+                group_speeds[group_uuid] = [0, 0]  # [сумма скоростей, количество товаров]
+            # Добавляем скорость продаж товара и увеличиваем счетчик
+            group_speeds[group_uuid][0] += product['sales_speed']
+            group_speeds[group_uuid][1] += 1
+
+    # Вычисляем средние значения
+    average_speeds = {}
+    for group_uuid, (total_speed, count) in group_speeds.items():
+        average_speeds[group_uuid] = round(total_speed / count, 2) if count > 0 else 0
+
+    return average_speeds
+
+def calculate_group_profitability(products_data):
+    """
+    Рассчитывает среднюю прибыльность группы на основе всех товаров в ней
+    и её подгруппах.
+    """
+    group_profitability = {}  # uuid -> (total_profitability, count)
+
+    # Сначала собираем все товары по группам
+    for product in products_data:
+        # Для каждого уровня в пути группы
+        for i in range(len(product['uuid_path'])):
+            group_uuid = product['uuid_path'][i]
+            if group_uuid not in group_profitability:
+                group_profitability[group_uuid] = [0, 0]  # [сумма прибыльности группы, количество товаров]
+            # Добавляем прибыльность группы (произведение прибыли на скорость) и увеличиваем счетчик
+            group_profitability[group_uuid][0] += (product['profit'] * product['sales_speed'])
+            group_profitability[group_uuid][1] += 1
+
+    # Вычисляем средние значения
+    average_profitability = {}
+    for group_uuid, (total_profitability, count) in group_profitability.items():
+        average_profitability[group_uuid] = round(total_profitability / count, 2) if count > 0 else 0
+
+    return average_profitability
+
 def create_hierarchical_sort_key(product):
     """
     Создает ключ сортировки, который обеспечивает правильное иерархическое отображение.
@@ -1017,9 +1067,11 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             
         print(f"Максимальная глубина групп: {max_depth}")
 
-        # Рассчитываем количества и среднюю прибыльность для всех групп
+        # Рассчитываем количества и средние значения для всех групп
         group_quantities = calculate_group_quantities(products_data)
         group_profits = calculate_group_profits(products_data)
+        group_sales_speeds = calculate_group_sales_speed(products_data)
+        group_profitability = calculate_group_profitability(products_data)
 
         # Сортируем данные с использованием иерархического ключа
         products_data.sort(key=create_hierarchical_sort_key)
@@ -1028,14 +1080,16 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         group_level_headers = [f'Уровень {i+2}' for i in range(max_depth-1)] if max_depth > 1 else []
         headers = group_level_headers + [
             'UUID',  # Изменено название столбца
-            'Наименование', 'Количество', 'Прибыльность', 'Скорость продаж', 
-            '30', 'Мин.остаток'
+            'Наименование', 'Количество проданного', 'Средняя прибыльность товара', 'Скорость продаж', 
+            'Прибыльность группы', '30', 'Мин.остаток'
         ]
         
         # Записываем заголовки
         for col, header in enumerate(headers, start=1):
             cell = ws.cell(row=1, column=col, value=header)
             cell.font = Font(color="000000", bold=True)
+            # Применяем форматирование для всех заголовков
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
         # Инициализируем current_row здесь
         current_row = 2
@@ -1058,6 +1112,13 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         # Записываем среднюю прибыльность для группы
                         profit_cell = ws.cell(row=current_row, column=max_depth+3, value=group_profits.get(uuid, 0))
                         profit_cell.number_format = '0.00'
+                        # Записываем среднюю скорость продаж для группы
+                        speed_cell = ws.cell(row=current_row, column=max_depth+4, value=group_sales_speeds.get(uuid, 0))
+                        speed_cell.number_format = '0.00'
+                        # Записываем среднюю прибыльность группы
+                        group_profit_cell = ws.cell(row=current_row, column=max_depth+5, value=group_profitability.get(uuid, 0))
+                        group_profit_cell.number_format = '0.00'
+                        
                         color_index = min(i - 1, len(color_palette) - 1)
                         fill_color = color_palette[color_index]
                         for col in range(1, ws.max_column + 1):
@@ -1088,31 +1149,38 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             profit_cell.number_format = '0.00'
             speed_cell = ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
             speed_cell.number_format = '0.00'
+            # Рассчитываем прибыльность группы как произведение средней прибыльности на скорость продаж
+            group_profit = round(product['profit'] * product['sales_speed'], 2)
+            group_profit_cell = ws.cell(row=current_row, column=max_depth+5, value=group_profit)
+            group_profit_cell.number_format = '0.00'
             
             current_row += 1
             current_uuid_path = uuid_path
 
         # Теперь, когда у нас есть все данные, добавляем формулы
-        name_col = get_column_letter(max_depth+1)  # Столбец "Наименование"
-        speed_col = get_column_letter(max_depth+4)  # Столбец "Скорость продаж"
-        forecast_col = get_column_letter(max_depth+5)  # Столбец "30"
-        round_col = get_column_letter(max_depth+6)  # Столбец для округления вверх
-        
+        name_col = get_column_letter(max_depth+1)      # Столбец "Наименование"
+        quantity_col = get_column_letter(max_depth+2)  # Столбец "Количество проданного"
+        profit_col = get_column_letter(max_depth+3)    # Столбец "Средняя прибыльность товара"
+        speed_col = get_column_letter(max_depth+4)     # Столбец "Скорость продаж"
+        group_profit_col = get_column_letter(max_depth+5)  # Столбец "Прибыльность группы"
+        forecast_col_letter = get_column_letter(max_depth+6)  # Столбец "30"
+        round_col_letter = get_column_letter(max_depth+7)     # Столбец "Мин.остаток"
+
         # Устанавливаем значение 30 в первой ячейке столбца forecast
-        ws.cell(row=1, column=max_depth+5, value=30)
+        ws.cell(row=1, column=max_depth+6, value=30)
         
         # Добавляем формулы в каждую строку, где есть значение в столбце "Наименование"
         for row in range(2, current_row):
             name_cell = ws.cell(row=row, column=max_depth+1).value
             if name_cell:
                 # Формула для столбца "30" с абсолютной ссылкой на ячейку с числом
-                forecast_formula = f'={speed_col}{row}*{forecast_col}$1'
-                forecast_cell = ws.cell(row=row, column=max_depth+5, value=forecast_formula)
+                forecast_formula = f'={speed_col}{row}*{forecast_col_letter}$1'
+                forecast_cell = ws.cell(row=row, column=max_depth+6, value=forecast_formula)
                 forecast_cell.number_format = '0.00'
                 
                 # Формула для столбца округления вверх
-                round_formula = f'=CEILING({forecast_col}{row})'
-                round_cell = ws.cell(row=row, column=max_depth+6, value=round_formula)
+                round_formula = f'=CEILING({forecast_col_letter}{row})'
+                round_cell = ws.cell(row=row, column=max_depth+7, value=round_formula)
                 round_cell.number_format = '0.00'
 
         # После записи всех данных и перед форматированием добавляем группировку
@@ -1163,34 +1231,41 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     ws.row_dimensions[row].hidden = False
 
         # Отключаем группировку для заголовка
-        ws.row_dimensions[1].outline_level = 0
-        
-        # Форматирование
-        ws.freeze_panes = 'A2'
-        
-        # Устанавливаем фиксированную ширину для столбцов "30" и следующего за ним
-        forecast_col_letter = get_column_letter(max_depth+5)  # Столбец "30"
-        round_col_letter = get_column_letter(max_depth+6)  # Следующий столбец
-        ws.column_dimensions[forecast_col_letter].width = 14
-        ws.column_dimensions[round_col_letter].width = 14
+        ws.row_dimensions[1].outline_level = 0 
 
-        # Центрируем заголовки в указанных столбцах
-        quantity_col = get_column_letter(max_depth+2)  # Столбец "Количество"
-        profit_col = get_column_letter(max_depth+3)  # Столбец "Прибыльность"
-        speed_col = get_column_letter(max_depth+4)  # Столбец "Скорость продаж"
+        # Форматирование
+        ws.freeze_panes = ws['A2']  # Закрепляем первую строку
         
-        for col_letter in [quantity_col, profit_col, speed_col, forecast_col_letter, round_col_letter]:
+        # Устанавливаем ширину для столбца "Наименование"
+        ws.column_dimensions[name_col].width = 90
+
+        # Устанавливаем выравнивание по левому краю для заголовков от столбца A до "Наименование"
+        for col in range(1, ws[name_col + '1'].column + 1):
+            header_cell = ws.cell(row=1, column=col)
+            header_cell.alignment = Alignment(horizontal='left', vertical='center', shrink_to_fit=True)
+
+        # Устанавливаем ширину и форматирование для указанных столбцов
+        fixed_width_columns = [
+            quantity_col, profit_col, speed_col, group_profit_col,
+            forecast_col_letter, round_col_letter
+        ]
+        
+        # Устанавливаем ширину столбцов и форматируем все ячейки
+        for col_letter in fixed_width_columns:
+            ws.column_dimensions[col_letter].width = 15
+            # Форматируем заголовок
             header_cell = ws.cell(row=1, column=ws[col_letter + '1'].column)
-            header_cell.alignment = Alignment(horizontal='center')
+            header_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            # Форматируем все ячейки в столбце
+            for cell in ws[col_letter]:
+                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
         
-        # Автоподбор ширины столбцов
+        # Автоподбор ширины для остальных столбцов
         for column in ws.columns:
             column_letter = get_column_letter(column[0].column)
-            max_length = 0
-            column_letter = column[0].column_letter
             
             # Пропускаем столбцы с фиксированной шириной
-            if column[0].column in [max_depth+5, max_depth+6]:  # Столбцы "30" и следующий
+            if column_letter in fixed_width_columns or column_letter == name_col:
                 continue
                 
             # Если это столбец "UUID" (max_depth)
@@ -1198,11 +1273,15 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 ws.column_dimensions[column_letter].width = 3
                 # Применяем настройки отображения ко всем ячейкам в столбце
                 for cell in column:
-                    if isinstance(cell.hyperlink, str):  # Если есть ссылка
-                        cell.font = Font(color="0000FF", underline="single")
-                    cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
+                    if cell.row == 1:  # For the header cell
+                        cell.alignment = Alignment(horizontal='left', vertical='center', shrink_to_fit=True)
+                    else:  # For other cells
+                        if isinstance(cell.hyperlink, str):  # Если есть ссылка
+                            cell.font = Font(color="0000FF", underline="single")
+                        cell.alignment = Alignment(horizontal='left', shrink_to_fit=True)
                 continue
 
+            max_length = 0
             for cell in column:
                 try:
                     if len(str(cell.value)) > max_length:
@@ -1213,30 +1292,99 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             ws.column_dimensions[column_letter].width = adjusted_width
 
         # После сбора всех данных и перед созданием заголовков
-        sheet_name = get_sheet_name(products_data)
-        ws.title = sheet_name
-        print(f"Название листа: {sheet_name}")
+        ws.title = "Анализ1"
+        print(f"Название листа: {ws.title}")
         
-        # Форматируем даты для имени файла
-        start_date_obj = datetime.strptime(start_date, '%Y-%m-%d')
-        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
-        start_date_formatted = start_date_obj.strftime('%d.%m.%y')
-        end_date_formatted = end_date_obj.strftime('%d.%m.%y')
+        # Создаем лист с информацией
+        info_ws = wb.create_sheet("Инфо")  # Создаем лист "Инфо" последним в книге, убираем индекс 0
         
-        # Получаем название группы товаров (первое название из второго уровня)
-        product_group_name = ''
-        for product in products_data:
-            names_by_level = product['names_by_level']
-            if len(names_by_level) > 1 and names_by_level[1]:  # Если есть второй уровень
-                product_group_name = names_by_level[1]
-                break
-        
-        # Получаем название магазина
+        # Получаем название магазина для информационного листа
         stores = get_stores()
         store_name = next((store['name'] for store in stores if store['id'] == store_id), store_id)
         
+        # Форматируем даты для отображения
+        start_date_obj = datetime.strptime(start_date, '%Y-%m-%d')
+        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
+        start_date_formatted = start_date_obj.strftime('%d.%m.%Y')
+        end_date_formatted = end_date_obj.strftime('%d.%m.%Y')
+        
+        # Подготавливаем данные для информационного листа
+        info_data = [
+            ["Параметры анализа", ""],
+            ["", ""],
+            ["Период анализа:", f"с {start_date_formatted} по {end_date_formatted}"],
+            ["Количество дней для поиска поступлений на склад до рассматриваемого периода:", f"{request.form.get('search_days', '300')} дней"],
+            ["Количество дней анализа:", f"{(end_date_obj - start_date_obj).days + 1} дней"],
+            ["", ""],
+            ["Магазин:", store_name],
+            ["", ""],
+            ["Период планирования:", f"{planning_days} дней"],
+            ["", ""],
+            ["Выбранные группы товаров:", ""],
+        ]
+        
+        # Добавляем информацию о выбранных группах
+        selected_groups = []
+        for product in products_data:
+            if product['group_path'] and product['group_path'] not in selected_groups:
+                selected_groups.append(product['group_path'])
+        
+        # Получаем название группы для имени файла и находим общий путь
+        group_name_for_file = "Все группы"
+        common_path = ""
+        if selected_groups:
+            # Разбиваем первый путь на компоненты для начального сравнения
+            path_parts = selected_groups[0].split('/')
+            
+            # Находим общие части пути для всех групп
+            for i in range(len(path_parts)):
+                current_part = '/'.join(path_parts[:i+1])
+                is_common = all(group.startswith(current_part) for group in selected_groups)
+                if is_common:
+                    common_path = current_part
+                else:
+                    break
+            
+            # Если общий путь найден, используем его последнюю часть для имени файла
+            if common_path:
+                group_name_for_file = common_path.split('/')[-1]
+        
+        # Добавляем общий путь в информационный лист
+        if common_path:
+            info_data.append(["", common_path + "/"])
+        else:
+            info_data.append(["", "Все группы"])
+        
+        # Записываем данные в лист
+        for row_idx, row_data in enumerate(info_data, 1):
+            for col_idx, value in enumerate(row_data, 1):
+                cell = info_ws.cell(row=row_idx, column=col_idx, value=value)
+                # Форматирование для заголовков
+                if row_idx == 1 or (col_idx == 1 and value):
+                    cell.font = Font(bold=True)
+                # Выравнивание
+                cell.alignment = Alignment(vertical='center')
+                if col_idx == 1:
+                    cell.alignment = Alignment(horizontal='right', vertical='center')
+                else:
+                    cell.alignment = Alignment(horizontal='left', vertical='center')
+        
+        # Устанавливаем ширину столбцов
+        info_ws.column_dimensions['A'].width = 30
+        info_ws.column_dimensions['B'].width = 60
+        
+        # Добавляем время создания отчета
+        current_time = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+        time_row = len(info_data) + 2
+        info_ws.cell(row=time_row, column=1, value="Отчет сформирован:").font = Font(bold=True)
+        info_ws.cell(row=time_row, column=1).alignment = Alignment(horizontal='right', vertical='center')
+        info_ws.cell(row=time_row, column=2, value=current_time).alignment = Alignment(horizontal='left', vertical='center')
+        
+        # Делаем активным лист "Анализ1"
+        wb.active = wb["Анализ1"]
+        
         # Формируем имя файла
-        filename = f"{start_date_formatted}-{end_date_formatted} - {product_group_name} - {store_name}.xlsx"
+        filename = f"{start_date_formatted}-{end_date_formatted} - {group_name_for_file} - {store_name}.xlsx"
         
         wb.save(filename)
         wb.close()
