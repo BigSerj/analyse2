@@ -397,6 +397,7 @@
             function updateRemainingCount(count) {
                 const remainingCount = document.getElementById('remainingCount');
                 const remainingTime = document.getElementById('remainingTime');
+                const searchDays = parseInt(document.getElementById('search_days').value) || 300;
                 
                 if (count === '...') {
                     remainingCount.textContent = '...';
@@ -406,11 +407,27 @@
                     if (!isNaN(numCount) && numCount >= 0) {
                         remainingCount.textContent = numCount + '';
                         
-                        // Calculate estimated time (3 seconds per position)
-                        const totalSeconds = Math.max(0, numCount * 3);
+                        // Calculate time per item based on search days
+                        let timePerItem;
+                        if (searchDays <= 300) {
+                            timePerItem = 1.4; // базовое время для 300 дней
+                        } else if (searchDays <= 365) {
+                            // Для диапазона 300-365 дней: ~0.0062 сек/день
+                            timePerItem = 1.4 + ((searchDays - 300) * 0.0062);
+                        } else {
+                            // Для диапазона более 365 дней: первые 65 дней по 0.0062 сек/день, остальные по 0.0025 сек/день
+                            timePerItem = 1.4 + (65 * 0.0062) + ((searchDays - 365) * 0.0025);
+                        }
+                        
+                        // Для меньшего количества дней пропорционально уменьшаем время
+                        if (searchDays < 300) {
+                            timePerItem = (timePerItem * searchDays) / 300;
+                        }
+                        
+                        const totalSeconds = Math.ceil(numCount * timePerItem);
                         
                         if (totalSeconds <= 0) {
-                            remainingTime.textContent = '0';
+                            remainingTime.textContent = '0 сек';
                         } else {
                             const hours = Math.floor(totalSeconds / 3600);
                             const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -419,7 +436,7 @@
                             let timeString = '';
                             if (hours > 0) timeString += hours + ' ч ';
                             if (minutes > 0) timeString += minutes + ' мин ';
-                            if (seconds > 0) timeString += seconds + ' сек';
+                            if (seconds > 0 || timeString === '') timeString += seconds + ' сек';
                             
                             remainingTime.textContent = timeString.trim();
                         }
@@ -454,6 +471,11 @@
             <div class="form-group">
                 <label for="end_date">Дата окончания:</label>
                 <input type="date" id="end_date" name="end_date" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="search_days">Количество дней для поиска поступлений на склад до рассматриваемого периода:</label>
+                <input type="number" id="search_days" name="search_days" required min="1" value="300">
             </div>
             
             <div class="form-group">

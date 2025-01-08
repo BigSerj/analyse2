@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import json
 import threading
 import math
-from time import sleep
+from time import sleep, time
 
 app = Flask(__name__)
 
@@ -327,7 +327,29 @@ def embed():
                         const remainingNum = parseInt(remaining);
                         if (remainingNum > 0) {
                             remainingItems.textContent = remainingNum;
-                            const totalSeconds = Math.ceil(remainingNum * 3);
+                            
+                            // Получаем значение search_days из iframe
+                            const iframe = document.querySelector('iframe');
+                            const searchDays = parseInt(iframe.contentWindow.document.getElementById('search_days').value) || 300;
+                            
+                            // Рассчитываем время на одну позицию в зависимости от количества дней
+                            let timePerItem;
+                            if (searchDays <= 300) {
+                                timePerItem = 1.4; // базовое время для 300 дней
+                            } else if (searchDays <= 365) {
+                                // Для диапазона 300-365 дней: ~0.0062 сек/день
+                                timePerItem = 1.4 + ((searchDays - 300) * 0.0062);
+                            } else {
+                                // Для диапазона более 365 дней: первые 65 дней по 0.0062 сек/день, остальные по 0.0025 сек/день
+                                timePerItem = 1.4 + (65 * 0.0062) + ((searchDays - 365) * 0.0025);
+                            }
+                            
+                            // Для меньшего количества дней пропорционально уменьшаем время
+                            if (searchDays < 300) {
+                                timePerItem = (timePerItem * searchDays) / 300;
+                            }
+                            
+                            const totalSeconds = Math.ceil(remainingNum * timePerItem);
                             
                             if (totalSeconds <= 0) {
                                 remainingTime.textContent = '0 сек';
@@ -670,6 +692,9 @@ def get_bulk_operations(variant_ids, store_id, start_date, end_date):
     return requests.get(url, headers=headers, params=params).json()
 
 def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
+    print(f"\nНачало расчета скорости продаж для варианта {variant_id}")
+    total_start_time = time()
+    
     url = f"{BASE_URL}/report/turnover/byoperations"
     headers = {
         'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
@@ -677,15 +702,15 @@ def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     }
     
     # Преобразуем даты в datetime объекты
+    date_conversion_start = time()
     end_datetime = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
     original_start = datetime.strptime(start_date, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
-    
-    # Устанавливаем начальную дату на 5 лет раньше
-    extended_start = original_start - timedelta(days=5*365)
-    
-    # Форматируем даты для API
+    # Используем значение из параметра search_days
+    search_days = int(request.form.get('search_days', 300))
+    extended_start = original_start - timedelta(days=search_days)
     start_date_formatted = extended_start.strftime('%Y-%m-%d %H:%M:%S')
     end_date_formatted = end_datetime.strftime('%Y-%m-%d %H:%M:%S')
+    print(f"Время на конвертацию дат: {(time() - date_conversion_start):.3f} сек")
     
     params = {
         'momentFrom': start_date_formatted,
@@ -705,6 +730,8 @@ def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     
     print(f"Запрос для получения операций: URL={full_url}")
     
+    # Замер времени API запроса
+    api_request_start = time()
     try:
         response = requests.get(full_url, headers=headers, timeout=30)
     except requests.exceptions.Timeout:
@@ -713,29 +740,38 @@ def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     except requests.exceptions.RequestException as e:
         print(f"Ошибка при запросе операций для варианта {variant_id}: {str(e)}")
         return 0, '', '', '', ''
+    
+    api_request_time = time() - api_request_start
+    print(f"Время выполнения API запроса: {api_request_time:.3f} сек")
         
     if response.status_code != 200:
         print(f"Ошибка при получении данных: {response.status_code}. Ответ сервера: {response.text}")
         return 0, '', '', '', ''
 
+    # Замер времени парсинга JSON
+    json_parse_start = time()
     data = response.json()
+    json_parse_time = time() - json_parse_start
+    print(f"Время парсинга JSON: {json_parse_time:.3f} сек")
+    
     if not data or 'rows' not in data:
         print(f"Получен пустой ответ для варианта {variant_id}")
         return 0, '', '', '', ''
-        
-    # Фильтруем строки для нужной модификации
+    
+    # Замер времени фильтрации строк
+    filter_start = time()
     rows = [
         row for row in data.get('rows', [])
         if row['assortment']['meta']['href'].split('/')[-1] == variant_id
     ]
+    filter_time = time() - filter_start
+    print(f"Время фильтрации строк: {filter_time:.3f} сек")
     
     if not rows:
         return 0, '', '', '', ''
     
-    print(f"Всего операций после фильтрации по variant_id {variant_id}: {len(rows)}")
-    print(f"Название модификации: {rows[0]['assortment']['name']}")
-    
-    # Получаем метаданные группы и товара
+    # Получение метаданных
+    metadata_start = time()
     group_uuid = ''
     group_name = ''
     product_uuid = ''
@@ -751,53 +787,49 @@ def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     product_href = product_meta.get('uuidHref', '')
     if product_href:
         product_uuid = product_meta.get('href', '').split('/')[-1]
+    metadata_time = time() - metadata_start
+    print(f"Время обработки метаданных: {metadata_time:.3f} сек")
     
-    # Сортировка операций по дате
+    # Замер времени сортировки
+    sort_start = time()
     rows.sort(key=lambda x: datetime.fromisoformat(x['operation']['moment'].replace('Z', '+00:00')))
+    sort_time = time() - sort_start
+    print(f"Время сортировки операций: {sort_time:.3f} сек")
     
-    # Отслеживаем каждую единицу товара
-    stock_items = []  # [(arrival_time, sold_time)] для каждой единицы товара
-    current_stock = []  # [(arrival_time, quantity)]
+    # Замер времени расчета скорости продаж
+    calculation_start = time()
+    stock_items = []
+    current_stock = []
     retail_demand_counter = 0
     on_stock_time = timedelta()
     
-    # Проходим по всем операциям для построения полной картины движения товара
     for row in rows:
         operation_time = datetime.fromisoformat(row['operation']['moment'].replace('Z', '+00:00'))
         quantity = row['quantity']
         operation_type = row['operation']['meta']['type']
         
-        if quantity > 0:  # Приход товара
+        if quantity > 0:
             current_stock.append((operation_time, quantity))
-            print(f"Приход товара: {quantity} шт. в {operation_time}")
             
         elif operation_type == 'retaildemand' and original_start <= operation_time <= end_datetime:
-            # Розничная продажа в указанном периоде
             quantity_to_sell = abs(quantity)
-            print(f"Розничная продажа: {quantity_to_sell} шт. в {operation_time}")
             
-            # Ищем товар для продажи в порядке FIFO
             while quantity_to_sell > 0 and current_stock:
                 arrival_time, available_quantity = current_stock[0]
                 sold_from_batch = min(quantity_to_sell, available_quantity)
                 
-                # Добавляем время на складе для каждой проданной единицы
                 time_on_stock = operation_time - arrival_time
                 on_stock_time += time_on_stock * sold_from_batch
-                print(f"Продано {sold_from_batch} шт. из партии от {arrival_time}")
-                print(f"Время на складе: {time_on_stock} × {sold_from_batch} шт.")
                 
                 retail_demand_counter += sold_from_batch
                 quantity_to_sell -= sold_from_batch
                 
-                # Обновляем или удаляем партию
                 if sold_from_batch == available_quantity:
                     current_stock.pop(0)
                 else:
                     current_stock[0] = (arrival_time, available_quantity - sold_from_batch)
                     
-        elif quantity < 0:  # Другие операции ухода товара
-            # Просто уменьшаем количество в stock по FIFO
+        elif quantity < 0:
             quantity_to_remove = abs(quantity)
             while quantity_to_remove > 0 and current_stock:
                 if current_stock[0][1] <= quantity_to_remove:
@@ -808,16 +840,20 @@ def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
                     quantity_to_remove = 0
     
     days_on_stock = on_stock_time.total_seconds() / (24 * 60 * 60)
+    sales_speed = retail_demand_counter / days_on_stock if days_on_stock > 0 else 0
     
-    if days_on_stock > 0:
-        sales_speed = retail_demand_counter / days_on_stock
-    else:
-        sales_speed = 0
+    calculation_time = time() - calculation_start
+    print(f"Время расчета скорости продаж: {calculation_time:.3f} сек")
     
-    print(f"Вариант товара: {variant_id}")
-    print(f"Период на складе (дней): {days_on_stock}")
-    print(f"Количество розничных продаж: {retail_demand_counter}")
-    print(f"Скорость продаж: {sales_speed}")
+    total_time = time() - total_start_time
+    print(f"\nОбщее время выполнения get_sales_speed: {total_time:.3f} сек")
+    print(f"Разбивка времени выполнения:")
+    print(f"- API запрос: {api_request_time:.3f} сек ({(api_request_time/total_time*100):.1f}%)")
+    print(f"- Парсинг JSON: {json_parse_time:.3f} сек ({(json_parse_time/total_time*100):.1f}%)")
+    print(f"- Фильтрация: {filter_time:.3f} сек ({(filter_time/total_time*100):.1f}%)")
+    print(f"- Метаданные: {metadata_time:.3f} сек ({(metadata_time/total_time*100):.1f}%)")
+    print(f"- Сортировка: {sort_time:.3f} сек ({(sort_time/total_time*100):.1f}%)")
+    print(f"- Расчет: {calculation_time:.3f} сек ({(calculation_time/total_time*100):.1f}%)")
     
     return sales_speed, group_uuid, group_name, product_uuid, product_href
 
@@ -1020,7 +1056,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         # Записываем количество для группы
                         ws.cell(row=current_row, column=max_depth+2, value=group_quantities.get(uuid, 0))
                         # Записываем среднюю прибыльность для группы
-                        ws.cell(row=current_row, column=max_depth+3, value=group_profits.get(uuid, 0))
+                        profit_cell = ws.cell(row=current_row, column=max_depth+3, value=group_profits.get(uuid, 0))
+                        profit_cell.number_format = '0.00'
                         color_index = min(i - 1, len(color_palette) - 1)
                         fill_color = color_palette[color_index]
                         for col in range(1, ws.max_column + 1):
@@ -1047,7 +1084,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             # Записываем данные продукта
             ws.cell(row=current_row, column=max_depth+1, value=product['name'])
             ws.cell(row=current_row, column=max_depth+2, value=product['quantity'])
-            ws.cell(row=current_row, column=max_depth+3, value=product['profit'])
+            profit_cell = ws.cell(row=current_row, column=max_depth+3, value=product['profit'])
+            profit_cell.number_format = '0.00'
             speed_cell = ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
             speed_cell.number_format = '0.00'
             
