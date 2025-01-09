@@ -12,6 +12,7 @@ import json
 import threading
 import math
 from time import sleep, time
+from openpyxl.styles.colors import Color
 
 app = Flask(__name__)
 
@@ -996,7 +997,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         ws = wb.active
         
         # Определяем палитру цветов в начале
-        color_palette = ['f3f3f3', 'efefef', 'd9d9d9', 'cccccc', 'b7b7b7']
+        color_palette = ['F2F2F2', 'E6E6E6', 'D9D9D9', 'CCCCCC', 'BFBFBF']
         
         product_groups = get_product_groups()
         products_data = []
@@ -1096,7 +1097,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         current_uuid_path = []
         written_groups = set()  # Множество для отслеживания уже записанных групп
 
-        # Сначала записываем все данные
+        # Сначала записываем все данные для листа "Анализ1"
         for product in products_data:
             uuid_path = product['uuid_path']
             names_by_level = product['names_by_level']
@@ -1126,12 +1127,13 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                             cell.fill = PatternFill(start_color=fill_color, 
                                                   end_color=fill_color, 
                                                   fill_type='solid')
-                    
-                    if current_row > 2:
-                        uuid_cell = ws.cell(row=current_row, column=max_depth, value=uuid)
-                        uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
-                    current_row += 1
-                    written_groups.add(group_key)
+                        
+                        if current_row > 2:
+                            uuid_cell = ws.cell(row=current_row, column=max_depth, value=uuid)
+                            uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
+                        
+                        current_row += 1
+                        written_groups.add(group_key)
             
             # При записи UUID товара
             if current_row > 2:
@@ -1149,7 +1151,6 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             profit_cell.number_format = '0.00'
             speed_cell = ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
             speed_cell.number_format = '0.00'
-            # Рассчитываем прибыльность группы как произведение средней прибыльности на скорость продаж
             group_profit = round(product['profit'] * product['sales_speed'], 2)
             group_profit_cell = ws.cell(row=current_row, column=max_depth+5, value=group_profit)
             group_profit_cell.number_format = '0.00'
@@ -1294,6 +1295,129 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         # После сбора всех данных и перед созданием заголовков
         ws.title = "Анализ1"
         print(f"Название листа: {ws.title}")
+        
+        # Создаем лист "Анализ2" и копируем в него данные с новой логикой
+        ws2 = wb.create_sheet("Анализ2")
+        
+        # Копируем заголовки и их форматирование, пропуская столбец "Наименование"
+        target_col = 1
+        for col in range(1, ws.max_column + 1):
+            # Пропускаем столбец "Наименование"
+            if col == max_depth + 1:
+                continue
+                
+            source_cell = ws.cell(row=1, column=col)
+            target_cell = ws2.cell(row=1, column=target_col)
+            
+            # Копируем значение и форматирование заголовка
+            target_cell.value = source_cell.value
+            target_cell.font = Font(bold=True, color=Color(rgb='00000000'))  # Черный цвет
+            
+            # Устанавливаем выравнивание в зависимости от столбца
+            if col <= max_depth:  # Для столбцов до UUID включительно
+                target_cell.alignment = Alignment(horizontal='left', shrink_to_fit=True)
+            else:
+                target_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            
+            # Копируем ширину столбца
+            source_letter = get_column_letter(col)
+            target_letter = get_column_letter(target_col)
+            if source_letter in ws.column_dimensions:
+                ws2.column_dimensions[target_letter].width = ws.column_dimensions[source_letter].width
+            
+            target_col += 1
+        
+        # Закрепляем первую строку
+        ws2.freeze_panes = ws2['A2']
+        
+        # Сбрасываем переменные для второго листа
+        target_row = 2
+        current_uuid_path = []
+        written_groups = set()
+        
+        # Копируем данные из первого листа
+        for source_row in range(2, current_row):
+            # Проверяем, есть ли в строке данные в столбцах "Уровень №"
+            has_group_data = False
+            for col in range(1, max_depth):
+                if ws.cell(row=source_row, column=col).value is not None:
+                    has_group_data = True
+                    break
+            
+            # Копируем только строки с группами
+            if has_group_data:
+                # Копируем всю строку с данными и форматированием
+                target_col = 1
+                for col in range(1, ws.max_column + 1):
+                    # Пропускаем столбец "Наименование"
+                    if col == max_depth + 1:
+                        continue
+                        
+                    source_cell = ws.cell(row=source_row, column=col)
+                    target_cell = ws2.cell(row=target_row, column=target_col)
+                    
+                    # Копируем значение
+                    target_cell.value = source_cell.value
+                    
+                    # Копируем форматирование
+                    if source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
+                        try:
+                            fill_color = source_cell.fill.start_color.rgb or 'FFFFFF'
+                            target_cell.fill = PatternFill(
+                                start_color=fill_color,
+                                end_color=fill_color,
+                                fill_type='solid'
+                            )
+                        except:
+                            pass
+                    
+                    # Копируем шрифт
+                    try:
+                        font_color = None
+                        if source_cell.font and source_cell.font.color:
+                            if hasattr(source_cell.font.color, 'rgb'):
+                                font_color = Color(rgb=source_cell.font.color.rgb)
+                            elif isinstance(source_cell.font.color, str):
+                                font_color = Color(rgb=source_cell.font.color)
+                        
+                        target_cell.font = Font(
+                            bold=bool(source_cell.font.bold) if source_cell.font else False,
+                            color=font_color,
+                            underline=source_cell.font.underline if source_cell.font else None
+                        )
+                    except:
+                        target_cell.font = Font(bold=False, color=Color(rgb='00000000'))
+                    
+                    # Копируем выравнивание
+                    if col <= max_depth:  # Для столбцов до UUID включительно
+                        target_cell.alignment = Alignment(horizontal='left', shrink_to_fit=True)
+                    else:
+                        target_cell.alignment = Alignment(
+                            horizontal='center',
+                            vertical='center',
+                            wrap_text=True
+                        )
+                    
+                    # Копируем формат чисел
+                    if source_cell.number_format:
+                        target_cell.number_format = source_cell.number_format
+                    
+                    # Копируем формулы, если они есть, корректируя номера столбцов
+                    if isinstance(source_cell.value, str) and source_cell.value.startswith('='):
+                        try:
+                            formula = source_cell.value.replace(str(source_row), str(target_row))
+                            # Корректируем ссылки на столбцы в формулах
+                            if col > max_depth + 1:
+                                old_col = get_column_letter(col)
+                                new_col = get_column_letter(target_col)
+                                formula = formula.replace(old_col, new_col)
+                            target_cell.value = formula
+                        except:
+                            pass
+                    
+                    target_col += 1
+                
+                target_row += 1
         
         # Создаем лист с информацией
         info_ws = wb.create_sheet("Инфо")  # Создаем лист "Инфо" последним в книге, убираем индекс 0
