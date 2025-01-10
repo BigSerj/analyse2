@@ -4,7 +4,7 @@ from markupsafe import Markup
 import requests
 from openpyxl import Workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.hyperlink import Hyperlink
 from datetime import datetime, timedelta
@@ -1159,14 +1159,24 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         # Записываем среднюю прибыльность группы
                         group_profit_cell = ws.cell(row=current_row, column=max_depth+5, value=group_profitability.get(uuid, 0))
                         group_profit_cell.number_format = '0.00'
+
+                        # Создаем стиль границы
+                        border = Border(
+                            # left=Side(style='thin'),
+                            # right=Side(style='thin'),
+                            # top=Side(style='thin'),
+                            # bottom=Side(style='thin')
+                        )
                         
                         color_index = min(i - 1, len(color_palette) - 1)
                         fill_color = color_palette[color_index]
                         for col in range(1, ws.max_column + 1):
                             cell = ws.cell(row=current_row, column=col)
+                            # Сохраняем только заливку, не трогая другие параметры форматирования
                             cell.fill = PatternFill(start_color=fill_color, 
                                                   end_color=fill_color, 
                                                   fill_type='solid')
+                            cell.border = border
                         
                         if current_row > 2:
                             uuid_cell = ws.cell(row=current_row, column=max_depth, value=uuid)
@@ -1402,13 +1412,22 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     
                     # Копируем форматирование
                     if source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
+                        # Создаем стиль границы
+                        border = Border(
+                            # left=Side(style='thin'),
+                            # right=Side(style='thin'),
+                            # top=Side(style='thin'),
+                            # bottom=Side(style='thin')
+                        )
                         try:
                             fill_color = source_cell.fill.start_color.rgb or 'FFFFFF'
+                            # При копировании также только заливку меняем
                             target_cell.fill = PatternFill(
                                 start_color=fill_color,
                                 end_color=fill_color,
                                 fill_type='solid'
                             )
+                            target_cell.border = border
                         except:
                             pass
                     
