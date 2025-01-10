@@ -80,9 +80,12 @@ def process():
         planning_days = int(request.form['planning_days'])
         
         product_groups = []
-        if 'final_product_groups' in request.form and request.form['final_product_groups']:
-            raw_groups = request.form['final_product_groups']
-            product_groups = [group for group in raw_groups.split(',') if group]
+        if 'final_product_groups' in request.form:
+            raw_groups = request.form.get('final_product_groups', '')
+            # Разбиваем строку с группами на отдельные ID
+            if raw_groups:
+                product_groups = [group.strip() for group in raw_groups.split(',') if group.strip()]
+            print(f"Обработанные группы: {product_groups}")
         
         manual_stock_settings = request.form.get('final_manual_stock_groups', '[]')
         
@@ -90,7 +93,17 @@ def process():
         if check_if_cancelled():
             return jsonify({'cancelled': True}), 200
             
-        report_data = get_report_data(start_date, end_date, store_id, product_groups)
+        try:
+            report_data = get_report_data(start_date, end_date, store_id, product_groups)
+            print("Получены данные отчета:", report_data is not None)
+            if report_data:
+                print(f"Количество строк в отчете: {len(report_data.get('rows', []))}")
+        except Exception as e:
+            print(f"Ошибка при получении данных отчета: {str(e)}")
+            import traceback
+            print("Полный стек ошибки:")
+            print(traceback.format_exc())
+            return jsonify({'error': str(e)}), 500
         
         if not report_data or 'rows' not in report_data or not report_data['rows']:
             return jsonify({'error': 'Нет данных для формирования отчета'}), 404
@@ -99,21 +112,31 @@ def process():
         if check_if_cancelled():
             return jsonify({'cancelled': True}), 200
             
-        # Считаем только позиции с продажами и вариантами
-        total_items = sum(1 for item in report_data['rows'] 
-                         if item.get('sellQuantity', 0) > 0 
-                         and ('/variant/' in item.get('assortment', {}).get('meta', {}).get('href', '') 
-                             or '/product/' in item.get('assortment', {}).get('meta', {}).get('href', '')))
-        
-        with processing_lock:
-            current_status['total'] = total_items
-            current_status['processed'] = 0
-        
-        # Проверяем отмену перед созданием отчета
-        if check_if_cancelled():
-            return jsonify({'cancelled': True}), 200
+        try:
+            # Считаем только позиции с продажами и вариантами
+            total_items = sum(1 for item in report_data['rows'] 
+                            if item.get('sellQuantity', 0) > 0 
+                            and ('/variant/' in item.get('assortment', {}).get('meta', {}).get('href', '') 
+                                or '/product/' in item.get('assortment', {}).get('meta', {}).get('href', '')))
             
-        excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days, manual_stock_settings)
+            print(f"Всего позиций для обработки: {total_items}")
+            
+            with processing_lock:
+                current_status['total'] = total_items
+                current_status['processed'] = 0
+            
+            # Проверяем отмену перед созданием отчета
+            if check_if_cancelled():
+                return jsonify({'cancelled': True}), 200
+                
+            excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days, manual_stock_settings)
+            
+        except Exception as e:
+            print(f"Ошибка при обработке данных: {str(e)}")
+            import traceback
+            print("Полный стек ошибки:")
+            print(traceback.format_exc())
+            return jsonify({'error': str(e)}), 500
         
         # Финальная проверка отмены перед отправкой результата
         if check_if_cancelled():
@@ -125,6 +148,10 @@ def process():
         })
             
     except Exception as e:
+        print(f"Общая ошибка в process: {str(e)}")
+        import traceback
+        print("Полный стек ошибки:")
+        print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 # Маршрут для скачивания файла
@@ -552,7 +579,7 @@ def index():
 
 # Добавьте все остальные функции из app.py:
 def get_report_data(start_date, end_date, store_id, product_groups):
-    print(f"\nStarting get_report_data with product_groups: {product_groups}")  # Начало функции
+    print(f"\nStarting get_report_data with product_groups: {product_groups}")
     
     global processing_cancelled
     with processing_lock:
@@ -581,33 +608,26 @@ def get_report_data(start_date, end_date, store_id, product_groups):
         
         filter_parts = []
         
-        print(f"Building filter with product_groups: {product_groups}")  # Отладка
+        print(f"Building filter with product_groups: {product_groups}")
         
         # Добавляем фильтр по складу
         if store_id:
             store_url = f"{BASE_URL}/entity/store/{store_id}"
-            store_filter = f'store={store_url}'
-            filter_parts.append(store_filter)
-            print(f"Added store filter: {store_filter}")  # Отладка
+            filter_parts.append(f'store={store_url}')
+            print(f"Added store filter: store={store_url}")
         
-        # Формируем фильтр по группам
+        # Формируем отдельный фильтр для каждой группы
         if product_groups:
-            # Формируем фильтр для всех выбранных групп
-            group_filters = []
             for group_id in product_groups:
                 if group_id:
                     product_folder_url = f"{BASE_URL}/entity/productfolder/{group_id}"
-                    group_filters.append(f"productFolder={product_folder_url}")
-            
-            if group_filters:
-                # Объединяем фильтры через ИЛИ (;)
-                folders_filter = '&filter='.join(group_filters)
-                filter_parts.append(folders_filter)
+                    filter_parts.append(f'productFolder={product_folder_url}')
+                    print(f"Added group filter: productFolder={product_folder_url}")
         
+        # Объединяем все фильтры через &filter=
         if filter_parts:
-            # Объединяем все части фильтра через запятую (И)
             params['filter'] = '&filter='.join(filter_parts)
-            print(f"Final filter parameter: {params['filter']}")  # Отладка
+            print(f"Final filter parameter: {params['filter']}")
         
         all_rows = []
         total_count = None
@@ -621,7 +641,8 @@ def get_report_data(start_date, end_date, store_id, product_groups):
             query_string = '&'.join(query_params)
             
             full_url = f"{url}?{query_string}"
-            print(f"Отправляем запрос: URL={full_url}, Headers={headers}")
+            print(f"\nИтоговый URL запроса:")
+            print(full_url)
             
             try:
                 response = requests.get(full_url, headers=headers, timeout=30)
@@ -679,18 +700,47 @@ def get_bulk_operations(variant_ids, store_id, start_date, end_date):
         'Accept': 'application/json;charset=utf-8'
     }
     
-    # Формируем фильтр для всех вариантов через OR
-    variant_filters = [f"variant={BASE_URL}/entity/variant/{vid}" for vid in variant_ids]
-    filter_query = " || ".join(variant_filters)
+    # Разбиваем список variant_ids на части по 10 элементов
+    batch_size = 10
+    all_rows = []
     
-    params = {
-        'momentFrom': start_date,
-        'momentTo': end_date,
-        'filter': f"store={BASE_URL}/entity/store/{store_id};({filter_query})",
-        'limit': 1000
-    }
+    # Обрабатываем variant_ids партиями
+    for i in range(0, len(variant_ids), batch_size):
+        batch_variants = variant_ids[i:i + batch_size]
+        
+        # Формируем фильтр для текущей партии вариантов через OR
+        variant_filters = [f"variant={BASE_URL}/entity/variant/{vid}" for vid in batch_variants]
+        filter_query = " || ".join(variant_filters)
+        
+        params = {
+            'momentFrom': start_date,
+            'momentTo': end_date,
+            'filter': f"store={BASE_URL}/entity/store/{store_id};({filter_query})",
+            'limit': 1000
+        }
+
+        print(f"\nЗапрос bulk operations (партия {i//batch_size + 1} из {(len(variant_ids) + batch_size - 1)//batch_size}):")
+        print(f"URL: {url}")
+        print(f"Количество вариантов в партии: {len(batch_variants)}")
+        
+        response = requests.get(url, headers=headers, params=params)
+        
+        print(f"Статус ответа: {response.status_code}")
+        
+        if response.status_code != 200:
+            error_message = f"Ошибка при получении bulk operations: {response.status_code}. Ответ сервера: {response.text}"
+            print(error_message)
+            continue  # Пропускаем ошибочную партию и продолжаем с следующей
+        
+        try:
+            data = response.json()
+            all_rows.extend(data.get('rows', []))
+            print(f"Получено строк в партии: {len(data.get('rows', []))}")
+        except requests.exceptions.JSONDecodeError as e:
+            print(f"Ошибка декодирования JSON в bulk operations: {str(e)}")
+            continue  # Пропускаем ошибочную партию и продолжаем с следующей
     
-    return requests.get(url, headers=headers, params=params).json()
+    return {'rows': all_rows}
 
 def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     print(f"\nНачало расчета скорости продаж для варианта {variant_id}")
