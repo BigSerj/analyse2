@@ -279,20 +279,33 @@
 
             function updateSelectedGroups() {
                 selectedGroups = [];
+                let selectedGroupPaths = [];
                 
-                // Собираем последние выбранные значения из каждого контейнера
+                // Собираем последние выбранные значения и пути из каждого контейнера
                 $('.group-container').each(function() {
-                    const lastSelected = $(this).find('.group-select').filter(function() {
-                        return $(this).val() !== '';
-                    }).last().val();
+                    let groupPath = [];
+                    let lastSelectedId = '';
                     
-                    if (lastSelected) {
-                        selectedGroups.push(lastSelected);
+                    // Проходим по всем select'ам в контейнере
+                    $(this).find('.group-select').each(function() {
+                        if ($(this).val() !== '') {
+                            lastSelectedId = $(this).val();
+                            // Получаем текст выбранной опции (название группы) и очищаем от лишних пробелов
+                            let selectedText = $(this).find('option:selected').text().trim();
+                            groupPath.push(selectedText);
+                        }
+                    });
+                    
+                    if (lastSelectedId) {
+                        selectedGroups.push(lastSelectedId);
+                        selectedGroupPaths.push(groupPath.join('/'));
                     }
                 });
                 
                 $('input[name="final_product_groups"]').val(selectedGroups.join(','));
+                $('input[name="final_product_paths"]').val(selectedGroupPaths.join('||'));
                 console.log('Updated selected groups:', selectedGroups);
+                console.log('Updated selected paths:', selectedGroupPaths);
             }
 
             // Обработчик отправки формы
@@ -509,13 +522,10 @@
                 </div>
                 <button type="button" class="add-group-btn" id="addGroupBtn">+ Добавить группу товаров</button>
                 <input type="hidden" name="final_product_groups" value="">
+                <input type="hidden" name="final_product_paths" value="">
+                <input type="hidden" name="planning_days" value="30">
             </div>
 
-            <div class="form-group">
-                <label for="planning_days">Дней планирования закупки:</label>
-                <input type="number" id="planning_days" name="planning_days" required min="1" value="30">
-            </div>
-            
             <div class="form-group">
                 <label>Введите минимальный остаток для товаров в подгруппе не ниже:</label>
                 <select id="manual_stock_group">

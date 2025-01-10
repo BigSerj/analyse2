@@ -999,6 +999,46 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         # Определяем палитру цветов в начале
         color_palette = ['F2F2F2', 'E6E6E6', 'D9D9D9', 'CCCCCC', 'BFBFBF']
         
+        # Получаем выбранные группы из формы до начала анализа данных
+        selected_groups = []
+        
+        # Получаем все значения из формы для отладки
+        print("\nВсе значения формы:")
+        for key, value in request.form.items():
+            print(f"{key}: {value}")
+        
+        # Собираем первую группу
+        current_path = []
+        group1_path = []
+        for i in range(1, 6):  # Максимум 5 уровней
+            level_key = f'group_level_{i}'
+            if level_key in request.form:
+                value = request.form[level_key].strip()
+                if value and value != "Выберите подгруппу":
+                    group1_path.append(value)
+        if group1_path:
+            selected_groups.append('/'.join(group1_path))
+
+        # print(f"222 Выбранные группы: {group1_path}")
+        
+        # Собираем вторую группу
+        group2_path = []
+        for i in range(6, 11):  # Следующие 5 уровней
+            level_key = f'group_level_{i}'
+            if level_key in request.form:
+                value = request.form[level_key].strip()
+                if value and value != "Выберите подгруппу":
+                    group2_path.append(value)
+        if group2_path:
+            selected_groups.append('/'.join(group2_path))
+
+        print(f"\nВыбранные группы для информационного листа: {selected_groups}")
+        
+        # Используем название последней группы для имени файла
+        group_name_for_file = "Все группы"
+        if selected_groups:
+            group_name_for_file = selected_groups[-1].split('/')[-1]
+        
         product_groups = get_product_groups()
         products_data = []
         max_depth = 0
@@ -1447,37 +1487,48 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             ["", ""],
             ["Выбранные группы товаров:", ""],
         ]
+
+        # print(f"333 request.form: {request.form.get('search_days')}")
+
+        product_groups = []
+        if 'final_product_groups' in request.form:
+            raw_groups = request.form.get('final_product_groups', '')
+            # Разбиваем строку с группами на отдельные ID
+            if raw_groups:
+                product_groups = [group.strip() for group in raw_groups.split(',') if group.strip()]
+            print(f"333 Обработанные группы: {product_groups}")
         
         # Добавляем информацию о выбранных группах
         selected_groups = []
-        for product in products_data:
-            if product['group_path'] and product['group_path'] not in selected_groups:
-                selected_groups.append(product['group_path'])
         
-        # Получаем название группы для имени файла и находим общий путь
+        # Получаем пути групп из формы
+        raw_paths = request.form.get('final_product_paths', '')
+        if raw_paths:
+            # Очищаем каждый путь от лишних пробелов, включая пробелы вокруг разделителя
+            selected_groups = []
+            second_level_names = []  # Список для хранения названий второго уровня
+            for path in raw_paths.split('||'):
+                if path.strip():
+                    # Разбиваем путь на части, очищаем каждую часть
+                    clean_path_parts = [part.strip() for part in path.strip().split('/')]
+                    selected_groups.append('/'.join(clean_path_parts))
+                    # Добавляем название второго уровня, если оно есть
+                    if len(clean_path_parts) > 1:
+                        second_level_names.append(clean_path_parts[1])
+        
+        # Формируем имя файла, используя названия второго уровня
         group_name_for_file = "Все группы"
-        common_path = ""
-        if selected_groups:
-            # Разбиваем первый путь на компоненты для начального сравнения
-            path_parts = selected_groups[0].split('/')
-            
-            # Находим общие части пути для всех групп
-            for i in range(len(path_parts)):
-                current_part = '/'.join(path_parts[:i+1])
-                is_common = all(group.startswith(current_part) for group in selected_groups)
-                if is_common:
-                    common_path = current_part
-                else:
-                    break
-            
-            # Если общий путь найден, используем его последнюю часть для имени файла
-            if common_path:
-                group_name_for_file = common_path.split('/')[-1]
+        if second_level_names:
+            group_name_for_file = ','.join(second_level_names)
         
-        # Добавляем общий путь в информационный лист
-        if common_path:
-            info_data.append(["", common_path + "/"])
+        # Добавляем выбранные группы в информационный лист
+        if selected_groups:
+            print("Добавляем выбранные группы в информационный лист:")
+            for group_path in selected_groups:
+                print(f"  - {group_path}")
+                info_data.append(["", group_path])
         else:
+            print("Нет выбранных групп, добавляем 'Все группы'")
             info_data.append(["", "Все группы"])
         
         # Записываем данные в лист
@@ -1509,7 +1560,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         wb.active = wb["Анализ1"]
         
         # Формируем имя файла
-        filename = f"{start_date_formatted}-{end_date_formatted} - {group_name_for_file} - {store_name}.xlsx"
+        filename = f"{start_date_formatted}-{end_date_formatted} - {store_name} - {group_name_for_file}.xlsx"
         
         wb.save(filename)
         wb.close()
