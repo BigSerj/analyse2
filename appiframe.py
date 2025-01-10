@@ -682,9 +682,7 @@ def get_report_data(start_date, end_date, store_id, product_groups):
             variant_id = assortment_href.split('/variant/')[-1] if is_variant else assortment_href.split('/product/')[-1]
             if variant_id:
                 variant_ids.append(variant_id)
-        
-        # Делаем один запрос для всех вариантов
-        operations_data = get_bulk_operations(variant_ids, store_id, start_date, end_date)
+    
         
         return {'meta': data.get('meta', {}), 'rows': all_rows}
         
@@ -693,54 +691,6 @@ def get_report_data(start_date, end_date, store_id, product_groups):
             abort(499, description="Processing cancelled by user")
         raise e
 
-def get_bulk_operations(variant_ids, store_id, start_date, end_date):
-    url = f"{BASE_URL}/report/turnover/byoperations"
-    headers = {
-        'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
-        'Accept': 'application/json;charset=utf-8'
-    }
-    
-    # Разбиваем список variant_ids на части по 10 элементов
-    batch_size = 10
-    all_rows = []
-    
-    # Обрабатываем variant_ids партиями
-    for i in range(0, len(variant_ids), batch_size):
-        batch_variants = variant_ids[i:i + batch_size]
-        
-        # Формируем фильтр для текущей партии вариантов через OR
-        variant_filters = [f"variant={BASE_URL}/entity/variant/{vid}" for vid in batch_variants]
-        filter_query = " || ".join(variant_filters)
-        
-        params = {
-            'momentFrom': start_date,
-            'momentTo': end_date,
-            'filter': f"store={BASE_URL}/entity/store/{store_id};({filter_query})",
-            'limit': 1000
-        }
-
-        print(f"\nЗапрос bulk operations (партия {i//batch_size + 1} из {(len(variant_ids) + batch_size - 1)//batch_size}):")
-        print(f"URL: {url}")
-        print(f"Количество вариантов в партии: {len(batch_variants)}")
-        
-        response = requests.get(url, headers=headers, params=params)
-        
-        print(f"Статус ответа: {response.status_code}")
-        
-        if response.status_code != 200:
-            error_message = f"Ошибка при получении bulk operations: {response.status_code}. Ответ сервера: {response.text}"
-            print(error_message)
-            continue  # Пропускаем ошибочную партию и продолжаем с следующей
-        
-        try:
-            data = response.json()
-            all_rows.extend(data.get('rows', []))
-            print(f"Получено строк в партии: {len(data.get('rows', []))}")
-        except requests.exceptions.JSONDecodeError as e:
-            print(f"Ошибка декодирования JSON в bulk operations: {str(e)}")
-            continue  # Пропускаем ошибочную партию и продолжаем с следующей
-    
-    return {'rows': all_rows}
 
 def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     print(f"\nНачало расчета скорости продаж для варианта {variant_id}")
@@ -1142,8 +1092,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             # Применяем форматирование для всех заголовков
             cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-        # Инициализируем current_row здесь
-        current_row = 2
+        # Инициализируем current_row с 3 вместо 2
+        current_row = 3
         current_uuid_path = []
         written_groups = set()  # Множество для отслеживания уже записанных групп
 
@@ -1266,7 +1216,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             return groups
 
         # Находим все группы
-        groups = find_groups(ws, 2, current_row - 1, max_depth)
+        groups = find_groups(ws, 3, current_row - 1, max_depth)  # Изменяем начальную строку на 3
 
         # Сортируем группы по уровню (от большего к меньшему)
         # и по позиции (сверху вниз)
@@ -1281,11 +1231,12 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     ws.row_dimensions[row].outline_level = current_level + 1 if current_level is not None else 1
                     ws.row_dimensions[row].hidden = False
 
-        # Отключаем группировку для заголовка
-        ws.row_dimensions[1].outline_level = 0 
+        # Отключаем группировку для заголовка и пустой строки
+        ws.row_dimensions[1].outline_level = 0
+        ws.row_dimensions[2].outline_level = 0  # Добавляем для пустой строки
 
         # Форматирование
-        ws.freeze_panes = ws['A2']  # Закрепляем первую строку
+        ws.freeze_panes = ws['A2']  # Закрепляем только первую строку
         
         # Устанавливаем ширину для столбца "Наименование"
         ws.column_dimensions[name_col].width = 90
@@ -1365,7 +1316,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             
             # Устанавливаем выравнивание в зависимости от столбца
             if col <= max_depth:  # Для столбцов до UUID включительно
-                target_cell.alignment = Alignment(horizontal='left', shrink_to_fit=True)
+                target_cell.alignment = Alignment(horizontal='left', vertical='center', shrink_to_fit=True)
             else:
                 target_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
             
@@ -1378,7 +1329,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             target_col += 1
         
         # Закрепляем первую строку
-        ws2.freeze_panes = ws2['A2']
+        ws2.freeze_panes = ws2['A2']  # Закрепляем только первую строку
         
         # Сбрасываем переменные для второго листа
         target_row = 2
@@ -1386,7 +1337,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         written_groups = set()
         
         # Копируем данные из первого листа
-        for source_row in range(2, current_row):
+        for source_row in range(3, current_row):  # Берем данные из Анализ1 начиная с 3-й строки
             # Проверяем, есть ли в строке данные в столбцах "Уровень №"
             has_group_data = False
             for col in range(1, max_depth):
