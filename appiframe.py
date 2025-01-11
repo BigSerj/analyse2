@@ -88,8 +88,6 @@ def process():
                 product_groups = [group.strip() for group in raw_groups.split(',') if group.strip()]
             print(f"Обработанные группы: {product_groups}")
         
-        manual_stock_settings = request.form.get('final_manual_stock_groups', '[]')
-        
         # Проверяем отмену перед получением данных
         if check_if_cancelled():
             return jsonify({'cancelled': True}), 200
@@ -130,7 +128,7 @@ def process():
             if check_if_cancelled():
                 return jsonify({'cancelled': True}), 200
                 
-            excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days, manual_stock_settings)
+            excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days)
             
         except Exception as e:
             print(f"Ошибка при обработке данных: {str(e)}")
@@ -1397,10 +1395,10 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             
             target_col += 1
         
-        # Добавляем автофильтр только для столбцов "Уровень №" (до UUID)
-        if max_depth > 1:  # Если есть столбцы уровней
-            filter_range = f"A1:{get_column_letter(max_depth-1)}1"
-            ws2.auto_filter.ref = f"A1:{get_column_letter(max_depth-1)}{ws2.max_row}"
+        # # Добавляем автофильтр только для столбцов "Уровень №" (до UUID)
+        # if max_depth > 1:  # Если есть столбцы уровней
+        #     filter_range = f"A1:{get_column_letter(max_depth-1)}1"
+        #     ws2.auto_filter.ref = f"A1:{get_column_letter(max_depth-1)}{ws2.max_row}"
 
         # Закрепляем первые две строки
         ws2.freeze_panes = ws2['A3']  # Закрепляем первые две строки
@@ -1537,6 +1535,11 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 
                 target_row += 1
         
+        # После копирования всех данных добавляем автофильтр для столбцов до UUID
+        if max_depth > 1:  # Если есть столбцы уровней
+            filter_range = f"A1:{get_column_letter(max_depth-1)}1"
+            ws2.auto_filter.ref = f"A1:{get_column_letter(max_depth-1)}{target_row-1}"
+
         # После копирования всех данных, добавляем формулу во вторую строку
         # Находим столбцы "Количество проданного" и "Средняя прибыльность товара"
         quantity_col = None

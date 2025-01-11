@@ -5,14 +5,19 @@
     <title>Отчет о прибыльности (iframe)</title>
     <style>
         body {
-            margin: 0;
-            padding: 15px;
             font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
         }
         
         .container {
-            max-width: 100%;
-            padding: 0;
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
         
         .form-group {
@@ -22,141 +27,92 @@
         label {
             display: block;
             margin-bottom: 5px;
+            font-weight: bold;
         }
         
-        select, input {
+        select, input[type="date"], input[type="number"] {
             width: 100%;
             padding: 8px;
             margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
             box-sizing: border-box;
         }
-
+        
+        .group-container {
+            margin-bottom: 10px;
+            position: relative;
+        }
+        
+        .group-selects {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
         .add-group-btn {
-            width: 100%;
-            padding: 10px;
-            margin: 10px 0;
-            background-color: #f8f9fa;
-            border: 1px solid #dee2e6;
-            cursor: pointer;
-            text-align: center;
-        }
-
-        .add-group-btn:hover {
-            background-color: #e9ecef;
-        }
-
-        .submit-btn {
-            width: 100%;
-            padding: 15px;
             background-color: #4CAF50;
             color: white;
+            padding: 8px 16px;
             border: none;
+            border-radius: 4px;
             cursor: pointer;
-            margin-top: 20px;
-        }
-
-        .submit-btn:hover {
-            background-color: #45a049;
-        }
-
-        .selected-groups {
             margin-top: 10px;
         }
-
-        .selected-group-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 5px;
-            margin: 5px 0;
-            background-color: #f8f9fa;
-            border: 1px solid #dee2e6;
-        }
-
-        .remove-group {
-            color: red;
-            cursor: pointer;
+        
+        .add-group-btn:hover {
+            background-color: #45a049;
         }
         
-        @media (max-width: 768px) {
-            body {
-                padding: 10px;
-            }
-        }
-
-        .loading {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(255, 255, 255, 0.8);
-            z-index: 1000;
-        }
-        
-        .loading-content {
+        .remove-container-btn {
             position: absolute;
+            right: -30px;
             top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-        }
-        
-        .error-message {
-            color: red;
-            margin: 10px 0;
-            padding: 10px;
-            background-color: #ffe6e6;
-            border: 1px solid #ffcccc;
-            border-radius: 4px;
-            display: none;
-        }
-        
-        .success-message {
-            color: green;
-            margin: 10px 0;
-            padding: 10px;
-            background-color: #e6ffe6;
-            border: 1px solid #ccffcc;
-            border-radius: 4px;
-            display: none;
-        }
-
-        .group-container {
-            position: relative;
-            margin-bottom: 15px;
-            padding: 10px;
-            border: 1px solid #dee2e6;
-            border-radius: 4px;
-        }
-        
-        .group-selects-container {
-            margin-top: 8px;
-            margin-bottom: 10px;
-        }
-        
-        .remove-group-btn {
+            transform: translateY(-50%);
+            background-color: #ff4444;
             color: white;
-            background-color: #dc3545;
             border: none;
-            border-radius: 4px;
-            float: right;
-            cursor: pointer;
-            padding: 2px 8px;
-            font-size: 16px;
-            line-height: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            border-radius: 50%;
             width: 24px;
             height: 24px;
-            margin-top: -10px;
-            transition: background-color 0.3s;
+            line-height: 24px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0;
         }
         
-        .remove-group-btn:hover {
-            background-color: #c82333;
+        .remove-container-btn:hover {
+            background-color: #cc0000;
+        }
+        
+        .submit-btn {
+            background-color: #2196F3;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 20px;
+        }
+        
+        .submit-btn:hover {
+            background-color: #1976D2;
+        }
+        
+        .processing-indicator {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+            font-weight: bold;
+            color: #666;
+        }
+        
+        hr {
+            border: none;
+            border-top: 1px solid #ddd;
+            margin: 20px 0;
         }
     </style>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -459,6 +415,245 @@
                     }
                 }
             }
+
+            let groupContainerCounter = 1;
+            let processingCancelled = false;
+            
+            function prepareFormData(form) {
+                // Собираем группы ТОЛЬКО из блока "Группа товаров:"
+                const productGroupContainers = document.querySelectorAll('#groups-wrapper .group-container');
+                const finalGroups = [];
+
+                console.log('Found product group containers:', productGroupContainers.length);
+
+                productGroupContainers.forEach((container, index) => {
+                    const selects = container.querySelectorAll('select');
+                    console.log(`Container ${index} has ${selects.length} selects`);
+                    
+                    let lastSelectedValue = '';
+
+                    // Проходим по всем селектам в контейнере
+                    selects.forEach((select, selectIndex) => {
+                        console.log(`Select ${selectIndex} value:`, select.value);
+                        console.log(`Select ${selectIndex} text:`, select.selectedOptions[0]?.text);
+                        
+                        if (select.value && select.selectedOptions[0] && select.selectedOptions[0].text !== "Выберите подгруппу") {
+                            lastSelectedValue = select.value;
+                            console.log(`Updated lastSelectedValue to:`, lastSelectedValue);
+                        }
+                    });
+
+                    // Добавляем значение только если оно не пустое
+                    if (lastSelectedValue) {
+                        finalGroups.push(lastSelectedValue);
+                        console.log(`Added to finalGroups:`, lastSelectedValue);
+                    }
+                });
+
+                console.log('Final groups before setting:', finalGroups);
+                
+                // Записываем собранные значения групп товаров в скрытое поле
+                const finalGroupsField = document.getElementById('final_product_groups');
+                finalGroupsField.value = finalGroups.join(',');
+                
+                console.log('Value set in final_product_groups:', finalGroupsField.value);
+
+                // Проверяем наличие выбранных групп
+                if (finalGroups.length === 0) {
+                    console.log('No groups selected!');
+                    alert('Выберите хотя бы одну группу товаров!');
+                    return false;
+                }
+
+                console.log('Form data ready for submission');
+                return true;
+            }
+
+            function addNewGroupContainer() {
+                const wrapper = document.getElementById('groups-wrapper');
+                
+                // Создаем новый контейнер
+                const newContainer = document.createElement('div');
+                newContainer.className = 'group-container';
+                newContainer.id = `group-container-${groupContainerCounter}`;
+                
+                const selectsDiv = document.createElement('div');
+                selectsDiv.className = 'group-selects';
+                
+                // Создаем новый select
+                const select = document.createElement('select');
+                select.id = `group-select-${groupContainerCounter}-0`;
+                select.name = 'temp_product_group';
+                
+                // Копируем все опции из оригинального селекта
+                const originalSelect = document.getElementById('group-select-0-0');
+                
+                // Клонируем все опции весте с их атрибутами
+                originalSelect.querySelectorAll('option').forEach(origOption => {
+                    const option = origOption.cloneNode(true);
+                    select.appendChild(option);
+                });
+                
+                // Привязываем обработчик события
+                select.addEventListener('change', function(event) {
+                    const currentContainer = parseInt(this.closest('.group-container').id.split('-').pop());
+                    loadSubgroups(this, 0, currentContainer);
+                    updateProductGroups();
+                });
+                
+                selectsDiv.appendChild(select);
+                newContainer.appendChild(selectsDiv);
+                wrapper.appendChild(newContainer);
+                
+                groupContainerCounter++;
+            }
+
+            function loadSubgroups(select, level, containerIndex) {
+                const groupContainer = select.closest('.group-container');
+                if (!groupContainer) return;
+
+                const selectsDiv = groupContainer.querySelector('.group-selects');
+                if (!selectsDiv) return;
+
+                const selects = Array.from(selectsDiv.getElementsByTagName('select'));
+                const currentSelectIndex = selects.indexOf(select);
+                
+                // Удаляем все следующие селекты после текущего
+                for (let i = selects.length - 1; i > currentSelectIndex; i--) {
+                    selectsDiv.removeChild(selects[i]);
+                }
+                
+                // Если выбрано путое значение, завершаем функцию после удаления селектов
+                const groupId = select.value;
+                if (!groupId) {
+                    updateProductGroups();
+                    return;
+                }
+                
+                const selectedOption = select.options[select.selectedIndex];
+                if (!selectedOption) {
+                    console.error('Selected option not found');
+                    return;
+                }
+
+                const childrenData = selectedOption.getAttribute('data-children');
+                if (!childrenData) {
+                    console.log('No children data found');
+                    return;
+                }
+
+                let children;
+                try {
+                    children = JSON.parse(childrenData);
+                } catch (e) {
+                    console.error('Error parsing children:', e);
+                    return;
+                }
+                
+                if (children && children.length > 0) {
+                    const newSelect = document.createElement('select');
+                    newSelect.id = `group-select-${containerIndex}-${level + 1}`;
+                    newSelect.name = 'temp_product_group';
+                    
+                    const defaultOption = document.createElement('option');
+                    defaultOption.value = "";
+                    defaultOption.textContent = "Выберите подгруппу";
+                    newSelect.appendChild(defaultOption);
+                    
+                    children.forEach(subgroup => {
+                        const option = document.createElement('option');
+                        option.value = subgroup.id;
+                        option.textContent = subgroup.name;
+                        if (subgroup.children) {
+                            option.setAttribute('data-children', JSON.stringify(subgroup.children));
+                        }
+                        newSelect.appendChild(option);
+                    });
+                    
+                    newSelect.addEventListener('change', function(event) {
+                        const currentContainer = parseInt(this.closest('.group-container').id.split('-').pop());
+                        const currentLevel = selects.length;
+                        loadSubgroups(this, currentLevel, currentContainer);
+                        updateProductGroups();
+                    });
+                    
+                    selectsDiv.appendChild(newSelect);
+                }
+                
+                updateProductGroups();
+            }
+
+            function updateProductGroups() {
+                const productGroupContainers = document.querySelectorAll('#groups-wrapper .group-container');
+                const finalGroups = [];
+
+                productGroupContainers.forEach(container => {
+                    const selects = container.querySelectorAll('select');
+                    let lastSelectedValue = '';
+
+                    // Проходим по всем селектам в контейнере
+                    for (let select of selects) {
+                        if (select.value && select.selectedOptions[0].text !== "Выберите подгруппу") {
+                            lastSelectedValue = select.value;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Добавляем значение только если оно не пустое
+                    if (lastSelectedValue) {
+                        finalGroups.push(lastSelectedValue);
+                    }
+                });
+
+                console.log('Updating product groups:', finalGroups);
+                document.getElementById('final_product_groups').value = finalGroups.join(',');
+            }
+
+            // Инициализация первого выпадающего списка
+            document.addEventListener('DOMContentLoaded', function() {
+                const firstSelect = document.getElementById('group-select-0-0');
+                if (firstSelect) {
+                    firstSelect.addEventListener('change', function(event) {
+                        loadSubgroups(this, 0, 0);
+                        updateProductGroups();
+                    });
+                }
+            });
+            
+            function startProcessing(form) {
+                console.log('Starting form processing...');
+                
+                if (!prepareFormData(form)) {
+                    console.log('Form data preparation failed');
+                    return false;
+                }
+                
+                console.log('Form data prepared successfully');
+                console.log('final_product_groups value:', document.getElementById('final_product_groups').value);
+                
+                document.getElementById('submitButton').style.display = 'block';
+                document.getElementById('processing-indicator').style.display = 'block';
+                processingCancelled = false;
+                
+                return true;
+            }
+
+            function stopProcessing() {
+                fetch('/cancel', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.cancelled) {
+                            document.getElementById('processing-indicator').style.display = 'none';
+                            alert('Обработка остановлена');
+                        } else {
+                            console.error('Failed to stop processing');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error stopping processing:', error);
+                    });
+            }
         });
     </script>
 </head>
@@ -526,18 +721,6 @@
                 <input type="hidden" name="planning_days" value="30">
             </div>
 
-            <div class="form-group">
-                <label>Введите минимальный остаток для товаров в подгруппе не ниже:</label>
-                <select id="manual_stock_group">
-                    <option value="">Выберите группу</option>
-                    {{ render_group_options(product_groups)|safe }}
-                </select>
-                <input type="number" id="min_stock_value" min="0" placeholder="Минимальный остаток">
-                <div class="selected-manual-stock-groups"></div>
-                <input type="hidden" name="final_manual_stock_groups" id="final_manual_stock_groups" value="[]">
-                <button type="button" class="add-group-btn" id="add_manual_stock_group">+ Добавить группу для минимального остатка</button>
-            </div>
-            
             <button type="submit" class="submit-btn">Сформировать отчет</button>
         </form>
     </div>
