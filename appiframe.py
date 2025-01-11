@@ -1390,38 +1390,54 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         for source_row in range(3, current_row):  # Берем данные из Анализ1 начиная с 3-й строки
             # Проверяем, есть ли в строке данные в столбцах "Уровень №"
             has_group_data = False
+            group_level = None
+            group_data = None
+            
+            # Находим самую глубокую группу в строке и её уровень
             for col in range(1, max_depth):
-                if ws.cell(row=source_row, column=col).value is not None:
+                cell_value = ws.cell(row=source_row, column=col).value
+                if cell_value is not None:
                     has_group_data = True
-                    break
+                    group_level = col
+                    group_data = cell_value
             
             # Копируем только строки с группами
             if has_group_data:
-                # Копируем всю строку с данными и форматированием
+                # Получаем путь группы из первого листа
+                group_path = []
+                for col in range(1, group_level + 1):
+                    parent_value = None
+                    # Ищем ближайшее непустое значение выше в том же столбце
+                    for row in range(source_row, 2, -1):
+                        cell_value = ws.cell(row=row, column=col).value
+                        if cell_value is not None:
+                            parent_value = cell_value
+                            break
+                    if parent_value is not None:
+                        group_path.append(parent_value)
+                
+                # Копируем данные с учетом пути группы
                 target_col = 1
                 for col in range(1, ws.max_column + 1):
                     # Пропускаем столбец "Наименование"
                     if col == max_depth + 1:
                         continue
-                        
+                    
                     source_cell = ws.cell(row=source_row, column=col)
                     target_cell = ws2.cell(row=target_row, column=target_col)
                     
-                    # Копируем значение
-                    target_cell.value = source_cell.value
+                    # Если это столбец уровня группы, записываем соответствующее значение из пути
+                    if col <= max_depth and col <= len(group_path):
+                        target_cell.value = group_path[col - 1]
+                    else:
+                        target_cell.value = source_cell.value
                     
                     # Копируем форматирование
                     if source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
                         # Создаем стиль границы
-                        border = Border(
-                            # left=Side(style='thin'),
-                            # right=Side(style='thin'),
-                            # top=Side(style='thin'),
-                            # bottom=Side(style='thin')
-                        )
+                        border = Border()
                         try:
                             fill_color = source_cell.fill.start_color.rgb or 'FFFFFF'
-                            # При копировании также только заливку меняем
                             target_cell.fill = PatternFill(
                                 start_color=fill_color,
                                 end_color=fill_color,
