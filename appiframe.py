@@ -1517,7 +1517,48 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 
                 target_row += 1
         
-        # После копирования всех данных, обновляем заголовок столбца "30" формулой суммы и добавляем "Сумма процентов"
+        # После копирования всех данных, добавляем формулу во вторую строку
+        # Находим столбцы "Количество проданного" и "Средняя прибыльность товара"
+        quantity_col = None
+        profit_col = None
+        for col in range(1, ws2.max_column + 1):
+            header = ws2.cell(row=1, column=col).value
+            if header == "Количество проданного":
+                quantity_col = get_column_letter(col)
+            elif header == "Средняя прибыльность товара":
+                profit_col = get_column_letter(col)
+        
+        # Находим столбец после "Прибыльность группы"
+        target_col = None
+        for col in range(1, ws2.max_column + 1):
+            if ws2.cell(row=1, column=col).value == "Прибыльность группы":
+                target_col = col + 1
+                break
+        
+        if target_col and quantity_col and profit_col:
+            # Добавляем формулу во вторую строку
+            formula_cell = ws2.cell(row=2, column=target_col)
+            formula_cell.value = f"={quantity_col}2*{profit_col}2"
+            formula_cell.number_format = '0.00'
+            formula_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        # Добавляем формулу в столбец "Процент"
+        percent_col = None
+        for col in range(1, ws2.max_column + 1):
+            if ws2.cell(row=1, column=col).value == "Процент":
+                percent_col = col
+                break
+        
+        if percent_col:
+            # Получаем букву предыдущего столбца
+            prev_col_letter = get_column_letter(percent_col - 1)
+            # Добавляем формулу
+            percent_cell = ws2.cell(row=2, column=percent_col)
+            percent_cell.value = f"={prev_col_letter}2*100/${prev_col_letter}$1"
+            percent_cell.number_format = '0.00'
+            percent_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        # После копирования всех данных, обновляем заголовок столбца "30" формулой суммы
         for col in range(1, ws2.max_column + 1):
             header_cell = ws2.cell(row=1, column=col)
             if header_cell.value == 30:
@@ -1544,29 +1585,13 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 # Устанавливаем ширину столбца
                 ws2.column_dimensions[new_col_letter].width = 15
                 
-                # Копируем форматирование только для ячеек с данными
-                for row in range(2, ws2.max_row + 1):
-                    source_cell = ws2.cell(row=row, column=new_col-1)
-                    target_cell = ws2.cell(row=row, column=new_col)
-                    
-                    # Копируем заливку и границы только для строк с данными (начиная с 3-й строки)
-                    if row > 2 and source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
-                        fill_color = source_cell.fill.start_color.rgb or 'FFFFFF'
-                        target_cell.fill = PatternFill(
-                            start_color=fill_color,
-                            end_color=fill_color,
-                            fill_type='solid'
-                        )
-                    if source_cell.border:
-                        target_cell.border = copy(source_cell.border)
-                    
-                    # Копируем выравнивание и шрифт
-                    target_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-                    target_cell.font = Font(bold=False, color=Color(rgb='00000000'))
-                    
-                    # Копируем формат чисел
-                    if source_cell.number_format:
-                        target_cell.number_format = source_cell.number_format
+                # Добавляем формулу в столбец "Сумма процентов"
+                if percent_col:
+                    percent_col_letter = get_column_letter(percent_col)
+                    sum_cell = ws2.cell(row=2, column=new_col)
+                    sum_cell.value = f"=SUM({percent_col_letter}$2:{percent_col_letter}2)"
+                    sum_cell.number_format = '0.00'
+                    sum_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
                 
                 break
 
