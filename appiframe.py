@@ -13,6 +13,7 @@ import threading
 import math
 from time import sleep, time
 from openpyxl.styles.colors import Color
+from copy import copy
 
 app = Flask(__name__)
 
@@ -1215,7 +1216,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         speed_col = get_column_letter(max_depth+4)     # Столбец "Скорость продаж"
         group_profit_col = get_column_letter(max_depth+5)  # Столбец "Прибыльность группы"
         forecast_col_letter = get_column_letter(max_depth+6)  # Столбец "30"
-        round_col_letter = get_column_letter(max_depth+7)     # Столбец "Мин.остаток"
+        round_col_letter = get_column_letter(max_depth+7)     # Столбец "Процент"
 
         # Устанавливаем значение 30 в первой ячейке столбца forecast
         ws.cell(row=1, column=max_depth+6, value=30)
@@ -1359,9 +1360,13 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 
             source_cell = ws.cell(row=1, column=col)
             target_cell = ws2.cell(row=1, column=target_col)
-            
+
             # Копируем значение и форматирование заголовка
-            target_cell.value = source_cell.value
+            if source_cell.value == 'Мин.остаток':
+                target_cell.value = 'Процент'
+            else:
+                target_cell.value = source_cell.value
+            
             target_cell.font = Font(bold=True, color=Color(rgb='00000000'))  # Черный цвет
             
             # Устанавливаем выравнивание в зависимости от столбца
@@ -1493,8 +1498,78 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     
                     target_col += 1
                 
+                # Добавляем значение в столбец "Сумма процентов" с тем же форматированием
+                last_col = ws2.max_column
+                last_cell = ws2.cell(row=target_row, column=last_col)
+                
+                # Применяем то же форматирование, что и у других ячеек в строке
+                if source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
+                    fill_color = source_cell.fill.start_color.rgb or 'FFFFFF'
+                    last_cell.fill = PatternFill(
+                        start_color=fill_color,
+                        end_color=fill_color,
+                        fill_type='solid'
+                    )
+                    last_cell.border = border
+                
+                last_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                last_cell.font = Font(bold=False, color=Color(rgb='00000000'))
+                
                 target_row += 1
         
+        # После копирования всех данных, обновляем заголовок столбца "30" формулой суммы и добавляем "Сумма процентов"
+        for col in range(1, ws2.max_column + 1):
+            header_cell = ws2.cell(row=1, column=col)
+            if header_cell.value == 30:
+                col_letter = get_column_letter(col)
+                last_row = ws2.max_row
+                header_cell.value = f'=SUM({col_letter}2:{col_letter}{last_row})'
+                
+                # Добавляем новый столбец "Сумма процентов"
+                new_col = ws2.max_column + 1
+                new_col_letter = get_column_letter(new_col)
+                
+                # Добавляем заголовок и копируем форматирование из заголовка столбца "Процент"
+                sum_header_cell = ws2.cell(row=1, column=new_col, value='Сумма процентов')
+                percent_header_cell = ws2.cell(row=1, column=new_col-1)
+                
+                # Копируем форматирование заголовка
+                sum_header_cell.font = copy(percent_header_cell.font)
+                sum_header_cell.alignment = copy(percent_header_cell.alignment)
+                if percent_header_cell.fill:
+                    sum_header_cell.fill = copy(percent_header_cell.fill)
+                if percent_header_cell.border:
+                    sum_header_cell.border = copy(percent_header_cell.border)
+                
+                # Устанавливаем ширину столбца
+                ws2.column_dimensions[new_col_letter].width = 15
+                
+                # Копируем форматирование только для ячеек с данными
+                for row in range(2, ws2.max_row + 1):
+                    source_cell = ws2.cell(row=row, column=new_col-1)
+                    target_cell = ws2.cell(row=row, column=new_col)
+                    
+                    # Копируем заливку и границы
+                    if source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
+                        fill_color = source_cell.fill.start_color.rgb or 'FFFFFF'
+                        target_cell.fill = PatternFill(
+                            start_color=fill_color,
+                            end_color=fill_color,
+                            fill_type='solid'
+                        )
+                    if source_cell.border:
+                        target_cell.border = copy(source_cell.border)
+                    
+                    # Копируем выравнивание и шрифт
+                    target_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                    target_cell.font = Font(bold=False, color=Color(rgb='00000000'))
+                    
+                    # Копируем формат чисел
+                    if source_cell.number_format:
+                        target_cell.number_format = source_cell.number_format
+                
+                break
+
         # Создаем лист с информацией
         info_ws = wb.create_sheet("Инфо")  # Создаем лист "Инфо" последним в книге, убираем индекс 0
         
