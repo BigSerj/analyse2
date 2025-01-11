@@ -1383,6 +1383,11 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             
             target_col += 1
         
+        # Добавляем автофильтр только для столбцов "Уровень №" (до UUID)
+        if max_depth > 1:  # Если есть столбцы уровней
+            filter_range = f"A1:{get_column_letter(max_depth-1)}1"
+            ws2.auto_filter.ref = f"A1:{get_column_letter(max_depth-1)}{ws2.max_row}"
+
         # Закрепляем первые две строки
         ws2.freeze_panes = ws2['A3']  # Закрепляем первые две строки
         
@@ -1575,23 +1580,39 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 percent_header_cell = ws2.cell(row=1, column=new_col-1)
                 
                 # Копируем форматирование заголовка
-                sum_header_cell.font = copy(percent_header_cell.font)
-                sum_header_cell.alignment = copy(percent_header_cell.alignment)
-                if percent_header_cell.fill:
-                    sum_header_cell.fill = copy(percent_header_cell.fill)
-                if percent_header_cell.border:
-                    sum_header_cell.border = copy(percent_header_cell.border)
+                sum_header_cell.font = Font(bold=True, color=Color(rgb='00000000'))
+                sum_header_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
                 
                 # Устанавливаем ширину столбца
                 ws2.column_dimensions[new_col_letter].width = 15
                 
-                # Добавляем формулу в столбец "Сумма процентов"
+                # Добавляем формулу только во вторую строку
                 if percent_col:
                     percent_col_letter = get_column_letter(percent_col)
                     sum_cell = ws2.cell(row=2, column=new_col)
                     sum_cell.value = f"=SUM({percent_col_letter}$2:{percent_col_letter}2)"
                     sum_cell.number_format = '0.00'
                     sum_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                    
+                    # Для строк с 3-й и далее копируем только форматирование
+                    for row in range(3, target_row):
+                        sum_cell = ws2.cell(row=row, column=new_col)
+                        sum_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                        sum_cell.number_format = '0.00'
+                        
+                        # Копируем только фон и границы из соседней ячейки
+                        # Копируем только фон и границы из соседней ячейки
+                        # Копируем фон и границы из соседней ячейки
+                        source_cell = ws2.cell(row=row, column=new_col-1)
+                        if source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
+                            fill_color = source_cell.fill.start_color.rgb or 'FFFFFF'
+                            sum_cell.fill = PatternFill(
+                                start_color=fill_color,
+                                end_color=fill_color,
+                                fill_type='solid'
+                            )
+                        if source_cell.border:
+                            sum_cell.border = copy(source_cell.border)
                 
                 break
 
