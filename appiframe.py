@@ -1129,7 +1129,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         # Записываем заголовки
         for col, header in enumerate(headers, start=1):
             cell = ws.cell(row=1, column=col, value=header)
-            cell.font = Font(color="000000", bold=True)
+            cell.font = Font(color="000000", bold=True, size=10)
             # Применяем форматирование для всех заголовков
             cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
@@ -1148,17 +1148,22 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 group_key = f"{i}_{uuid}"  # Создаем уникальный ключ для группы с учетом уровня
                 if (i >= len(current_uuid_path) or uuid != current_uuid_path[i]) and group_key not in written_groups:
                     if i > 0:
-                        ws.cell(row=current_row, column=i, value=names_by_level[i])
+                        group_cell = ws.cell(row=current_row, column=i, value=names_by_level[i])
+                        group_cell.font = Font(size=10)
                         # Записываем количество для группы
-                        ws.cell(row=current_row, column=max_depth+2, value=group_quantities.get(uuid, 0))
+                        quantity_cell = ws.cell(row=current_row, column=max_depth+2, value=group_quantities.get(uuid, 0))
+                        quantity_cell.font = Font(size=10)
                         # Записываем среднюю прибыльность для группы
                         profit_cell = ws.cell(row=current_row, column=max_depth+3, value=group_profits.get(uuid, 0))
+                        profit_cell.font = Font(size=10)
                         profit_cell.number_format = '0.00'
                         # Записываем среднюю скорость продаж для группы
                         speed_cell = ws.cell(row=current_row, column=max_depth+4, value=group_sales_speeds.get(uuid, 0))
+                        speed_cell.font = Font(size=10)
                         speed_cell.number_format = '0.00'
                         # Записываем среднюю прибыльность группы
                         group_profit_cell = ws.cell(row=current_row, column=max_depth+5, value=group_profitability.get(uuid, 0))
+                        group_profit_cell.font = Font(size=10)
                         group_profit_cell.number_format = '0.00'
 
                         # Создаем стиль границы
@@ -1181,6 +1186,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         
                         if current_row > 2:
                             uuid_cell = ws.cell(row=current_row, column=max_depth, value=uuid)
+                            uuid_cell.font = Font(size=10)
                             uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
                         
                         current_row += 1
@@ -1192,18 +1198,23 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 if product['product_href']:
                     uuid_cell.value = product['product_uuid']
                     uuid_cell.hyperlink = product['product_href']
-                    uuid_cell.font = Font(color="0000FF", underline="single")
+                    uuid_cell.font = Font(color="0000FF", underline="single", size=10)
                     uuid_cell.alignment = Alignment(horizontal='left', shrink_to_fit=False)
             
             # Записываем данные продукта
-            ws.cell(row=current_row, column=max_depth+1, value=product['name'])
-            ws.cell(row=current_row, column=max_depth+2, value=product['quantity'])
+            name_cell = ws.cell(row=current_row, column=max_depth+1, value=product['name'])
+            name_cell.font = Font(size=10)
+            quantity_cell = ws.cell(row=current_row, column=max_depth+2, value=product['quantity'])
+            quantity_cell.font = Font(size=10)
             profit_cell = ws.cell(row=current_row, column=max_depth+3, value=product['profit'])
+            profit_cell.font = Font(size=10)
             profit_cell.number_format = '0.00'
             speed_cell = ws.cell(row=current_row, column=max_depth+4, value=product['sales_speed'])
+            speed_cell.font = Font(size=10)
             speed_cell.number_format = '0.00'
             group_profit = round(product['profit'] * product['sales_speed'], 2)
             group_profit_cell = ws.cell(row=current_row, column=max_depth+5, value=group_profit)
+            group_profit_cell.font = Font(size=10)
             group_profit_cell.number_format = '0.00'
             
             current_row += 1
@@ -1219,7 +1230,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         round_col_letter = get_column_letter(max_depth+7)     # Столбец "Процент"
 
         # Устанавливаем значение 30 в первой ячейке столбца forecast
-        ws.cell(row=1, column=max_depth+6, value=30)
+        forecast_header = ws.cell(row=1, column=max_depth+6, value=30)
+        forecast_header.font = Font(size=10)
         
         # Добавляем формулы в каждую строку, где есть значение в столбце "Наименование"
         for row in range(2, current_row):
@@ -1228,11 +1240,13 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 # Формула для столбца "30" с абсолютной ссылкой на ячейку с числом
                 forecast_formula = f'={speed_col}{row}*{forecast_col_letter}$1'
                 forecast_cell = ws.cell(row=row, column=max_depth+6, value=forecast_formula)
+                forecast_cell.font = Font(size=10)
                 forecast_cell.number_format = '0.00'
                 
                 # Формула для столбца округления вверх
                 round_formula = f'=CEILING({forecast_col_letter}{row})'
                 round_cell = ws.cell(row=row, column=max_depth+7, value=round_formula)
+                round_cell.font = Font(size=10)
                 round_cell.number_format = '0.00'
 
         # После записи всех данных и перед форматированием добавляем группировку
@@ -1330,7 +1344,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         cell.alignment = Alignment(horizontal='left', vertical='center', shrink_to_fit=True)
                     else:  # For other cells
                         if isinstance(cell.hyperlink, str):  # Если есть ссылка
-                            cell.font = Font(color="0000FF", underline="single")
+                            cell.font = Font(color="0000FF", underline="single", size=10)
                         cell.alignment = Alignment(horizontal='left', shrink_to_fit=True)
                 continue
 
@@ -1367,7 +1381,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             else:
                 target_cell.value = source_cell.value
             
-            target_cell.font = Font(bold=True, color=Color(rgb='00000000'))  # Черный цвет
+            target_cell.font = Font(bold=True, color=Color(rgb='00000000'), size=10)  # Черный цвет
             
             # Устанавливаем выравнивание в зависимости от столбца
             if col <= max_depth:  # Для столбцов до UUID включительно
@@ -1469,10 +1483,11 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         target_cell.font = Font(
                             bold=bool(source_cell.font.bold) if source_cell.font else False,
                             color=font_color,
-                            underline=source_cell.font.underline if source_cell.font else None
+                            underline=source_cell.font.underline if source_cell.font else None,
+                            size=10
                         )
                     except:
-                        target_cell.font = Font(bold=False, color=Color(rgb='00000000'))
+                        target_cell.font = Font(bold=False, color=Color(rgb='00000000'), size=10)
                     
                     # Копируем выравнивание
                     if col <= max_depth:  # Для столбцов до UUID включительно
@@ -1518,7 +1533,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     last_cell.border = border
                 
                 last_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-                last_cell.font = Font(bold=False, color=Color(rgb='00000000'))
+                last_cell.font = Font(bold=False, color=Color(rgb='00000000'), size=10)
                 
                 target_row += 1
         
@@ -1544,6 +1559,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             # Добавляем формулу во вторую строку
             formula_cell = ws2.cell(row=2, column=target_col)
             formula_cell.value = f"={quantity_col}2*{profit_col}2"
+            formula_cell.font = Font(size=10)
             formula_cell.number_format = '0.00'
             formula_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
@@ -1560,6 +1576,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             # Добавляем формулу
             percent_cell = ws2.cell(row=2, column=percent_col)
             percent_cell.value = f"={prev_col_letter}2*100/${prev_col_letter}$1"
+            percent_cell.font = Font(size=10)
             percent_cell.number_format = '0.00'
             percent_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
@@ -1580,7 +1597,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 percent_header_cell = ws2.cell(row=1, column=new_col-1)
                 
                 # Копируем форматирование заголовка
-                sum_header_cell.font = Font(bold=True, color=Color(rgb='00000000'))
+                sum_header_cell.font = Font(bold=True, color=Color(rgb='00000000'), size=10)
                 sum_header_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
                 
                 # Устанавливаем ширину столбца
@@ -1693,7 +1710,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 cell = info_ws.cell(row=row_idx, column=col_idx, value=value)
                 # Форматирование для заголовков
                 if row_idx == 1 or (col_idx == 1 and value):
-                    cell.font = Font(bold=True)
+                    cell.font = Font(bold=True, size=10)
                 # Выравнивание
                 cell.alignment = Alignment(vertical='center')
                 if col_idx == 1:
@@ -1708,9 +1725,10 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         # Добавляем время создания отчета
         current_time = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
         time_row = len(info_data) + 2
-        info_ws.cell(row=time_row, column=1, value="Отчет сформирован:").font = Font(bold=True)
+        info_ws.cell(row=time_row, column=1, value="Отчет сформирован:").font = Font(bold=True, size=10)
         info_ws.cell(row=time_row, column=1).alignment = Alignment(horizontal='right', vertical='center')
-        info_ws.cell(row=time_row, column=2, value=current_time).alignment = Alignment(horizontal='left', vertical='center')
+        info_ws.cell(row=time_row, column=2, value=current_time).font = Font(size=10)
+        info_ws.cell(row=time_row, column=2).alignment = Alignment(horizontal='left', vertical='center')
         
         # Делаем активным лист "Анализ1"
         wb.active = wb["Анализ1"]
