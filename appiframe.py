@@ -1383,11 +1383,11 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             
             target_col += 1
         
-        # Закрепляем первую строку
-        ws2.freeze_panes = ws2['A2']  # Закрепляем только первую строку
+        # Закрепляем первые две строки
+        ws2.freeze_panes = ws2['A3']  # Закрепляем первые две строки
         
         # Сбрасываем переменные для второго листа
-        target_row = 2
+        target_row = 3  # Начинаем с третьей строки
         current_uuid_path = []
         written_groups = set()
         
@@ -1549,8 +1549,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     source_cell = ws2.cell(row=row, column=new_col-1)
                     target_cell = ws2.cell(row=row, column=new_col)
                     
-                    # Копируем заливку и границы
-                    if source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
+                    # Копируем заливку и границы только для строк с данными (начиная с 3-й строки)
+                    if row > 2 and source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
                         fill_color = source_cell.fill.start_color.rgb or 'FFFFFF'
                         target_cell.fill = PatternFill(
                             start_color=fill_color,
