@@ -1300,9 +1300,15 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
 
         # Форматирование
         ws.freeze_panes = ws['A2']  # Закрепляем только первую строку
+
+        # # Устанавливаем фиксированную ширину для столбцов уровней и наименования
+        # # Для всех столбцов уровней (от первого до UUID не включительно)
+        # for col in range(1, max_depth):
+        #     col_letter = get_column_letter(col)
+        #     ws.column_dimensions[col_letter].width = 14
         
         # Устанавливаем ширину для столбца "Наименование"
-        ws.column_dimensions[name_col].width = 90
+        ws.column_dimensions[name_col].width = 75
 
         # Устанавливаем выравнивание по левому краю для заголовков от столбца A до "Наименование"
         for col in range(1, ws[name_col + '1'].column + 1):
@@ -1355,6 +1361,12 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     pass
             adjusted_width = (max_length + 2)
             ws.column_dimensions[column_letter].width = adjusted_width
+
+        # Устанавливаем фиксированную ширину для столбцов уровней и наименования
+        # Для всех столбцов уровней (от первого до UUID не включительно)
+        for col in range(1, max_depth):
+            col_letter = get_column_letter(col)
+            ws.column_dimensions[col_letter].width = 14
 
         # После сбора всех данных и перед созданием заголовков
         ws.title = "Анализ1"
