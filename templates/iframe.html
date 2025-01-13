@@ -114,6 +114,59 @@
             border-top: 1px solid #ddd;
             margin: 20px 0;
         }
+        
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .status-box {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            width: 90%;
+            max-width: 500px;
+            text-align: center;
+        }
+
+        .status-box h3 {
+            margin-top: 0;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .status-box #processingStatus {
+            margin-bottom: 20px;
+        }
+
+        .status-box #statusText {
+            margin: 10px 0;
+            font-style: italic;
+            color: #666;
+        }
+
+        .stop-button {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .stop-button:hover {
+            background-color: #c82333;
+        }
     </style>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
@@ -124,6 +177,12 @@
             console.log('Product Groups:', window.productGroups);
             
             let selectedGroups = [];
+
+            // Initialize global variables
+            let stores = [];
+            let currentStoreIndex = 0;
+            let eventSource = null;
+            let currentProcessing = false;
 
             function createGroupSelect(level, parentGroup) {
                 console.log('Creating select for level', level, 'parent group:', parentGroup);
@@ -264,400 +323,300 @@
                 console.log('Updated selected paths:', selectedGroupPaths);
             }
 
-            // Обработчик отправки формы
-            $('#reportForm').on('submit', function(e) {
-                e.preventDefault();
-                
-                // Отправляем сообщение родительскому окну о начале обработки
-                window.parent.postMessage('startProcessing', '*');
-                
-                // Показываем индикатор загрузки
-                $('.loading').show();
-                $('.error-message').hide();
-                $('.success-message').hide();
-                
-                const formData = new FormData(this);
-                let eventSource = null;
-                
-                function startStatusStream() {
-                    if (eventSource) {
-                        eventSource.close();
-                    }
-                    eventSource = new EventSource('/status-stream');
-                    eventSource.onmessage = function(e) {
-                        updateRemainingCount(e.data);
-                    };
-                    eventSource.onerror = function() {
-                        eventSource.close();
-                    };
-                }
-                
-                function stopProcessing() {
-                    fetch('/cancel', { method: 'POST' })
-                        .then(() => {
-                            if (eventSource) {
-                                eventSource.close();
-                            }
-                            // Очищаем все состояния загрузки
-                            $('.loading').hide();
-                            $('.error-message').hide();
-                            $('.success-message').hide();
-                            // Сбрасываем счетчики
-                            $('#remainingCount').text('');
-                            $('#remainingTime').text('');
-                        });
-                }
-
-                $.ajax({
-                    url: '/process',
-                    type: 'POST',
-                    data: formData,
-                    processData: false,
-                    contentType: false,
-                    beforeSend: function() {
-                        $('.loading').show();
-                        $('.error-message').hide();
-                        $('.success-message').hide();
-                        $('#remainingCount').text('...');
-                        startStatusStream();
-                    },
-                    success: function(response) {
-                        if (response.cancelled) {
-                            if (eventSource) {
-                                eventSource.close();
-                            }
-                            $('.loading').hide();
-                        } else if (response.success && response.file_url) {
-                            setTimeout(function() {
-                                if (eventSource) {
-                                    eventSource.close();
-                                }
-                                $('.loading').hide();
-                                window.location.href = response.file_url;
-                            }, 1000);
-                        } else {
-                            if (eventSource) {
-                                eventSource.close();
-                            }
-                            $('.loading').hide();
-                            $('.error-message').text('Ошибка при формировании отчета').show();
-                        }
-                    },
-                    error: function(xhr, status, error) {
-                        if (eventSource) {
-                            eventSource.close();
-                        }
-                        $('.loading').hide();
-                        
-                        if (xhr.responseJSON && xhr.responseJSON.cancelled) {
-                            // Если это отмена, не показываем ошибку
-                            return;
-                        }
-                        
-                        let errorMessage = 'Произошла ошибка при формировании отчета';
-                        if (xhr.responseJSON && xhr.responseJSON.error) {
-                            errorMessage = xhr.responseJSON.error;
-                        }
-                        $('.error-message').text(errorMessage).show();
-                    }
-                });
-            });
-
-            function updateRemainingCount(count) {
-                const remainingCount = document.getElementById('remainingCount');
-                const remainingTime = document.getElementById('remainingTime');
-                const searchDays = parseInt(document.getElementById('search_days').value) || 300;
-                
-                if (count === '...') {
-                    remainingCount.textContent = '...';
-                    remainingTime.textContent = '...';
-                } else {
-                    const numCount = parseInt(count);
-                    if (!isNaN(numCount) && numCount >= 0) {
-                        remainingCount.textContent = numCount + '';
-                        
-                        // Calculate time per item based on search days
-                        let timePerItem;
-                        if (searchDays <= 300) {
-                            timePerItem = 1.4; // базовое время для 300 дней
-                        } else if (searchDays <= 365) {
-                            // Для диапазона 300-365 дней: ~0.0062 сек/день
-                            timePerItem = 1.4 + ((searchDays - 300) * 0.0062);
-                        } else {
-                            // Для диапазона более 365 дней: первые 65 дней по 0.0062 сек/день, остальные по 0.0025 сек/день
-                            timePerItem = 1.4 + (65 * 0.0062) + ((searchDays - 365) * 0.0025);
-                        }
-                        
-                        // Для меньшего количества дней пропорционально уменьшаем время
-                        if (searchDays < 300) {
-                            timePerItem = (timePerItem * searchDays) / 300;
-                        }
-                        
-                        const totalSeconds = Math.ceil(numCount * timePerItem);
-                        
-                        if (totalSeconds <= 0) {
-                            remainingTime.textContent = '0 сек';
-                        } else {
-                            const hours = Math.floor(totalSeconds / 3600);
-                            const minutes = Math.floor((totalSeconds % 3600) / 60);
-                            const seconds = totalSeconds % 60;
-                            
-                            let timeString = '';
-                            if (hours > 0) timeString += hours + ' ч ';
-                            if (minutes > 0) timeString += minutes + ' мин ';
-                            if (seconds > 0 || timeString === '') timeString += seconds + ' сек';
-                            
-                            remainingTime.textContent = timeString.trim();
-                        }
-                    } else {
-                        remainingCount.textContent = '0';
-                        remainingTime.textContent = '0';
-                    }
-                }
+            function showOverlay() {
+                document.getElementById('overlay').style.display = 'flex';
             }
 
-            let groupContainerCounter = 1;
-            let processingCancelled = false;
-            
-            function prepareFormData(form) {
-                // Собираем группы ТОЛЬКО из блока "Группа товаров:"
-                const productGroupContainers = document.querySelectorAll('#groups-wrapper .group-container');
-                const finalGroups = [];
-
-                console.log('Found product group containers:', productGroupContainers.length);
-
-                productGroupContainers.forEach((container, index) => {
-                    const selects = container.querySelectorAll('select');
-                    console.log(`Container ${index} has ${selects.length} selects`);
-                    
-                    let lastSelectedValue = '';
-
-                    // Проходим по всем селектам в контейнере
-                    selects.forEach((select, selectIndex) => {
-                        console.log(`Select ${selectIndex} value:`, select.value);
-                        console.log(`Select ${selectIndex} text:`, select.selectedOptions[0]?.text);
-                        
-                        if (select.value && select.selectedOptions[0] && select.selectedOptions[0].text !== "Выберите подгруппу") {
-                            lastSelectedValue = select.value;
-                            console.log(`Updated lastSelectedValue to:`, lastSelectedValue);
-                        }
-                    });
-
-                    // Добавляем значение только если оно не пустое
-                    if (lastSelectedValue) {
-                        finalGroups.push(lastSelectedValue);
-                        console.log(`Added to finalGroups:`, lastSelectedValue);
-                    }
-                });
-
-                console.log('Final groups before setting:', finalGroups);
-                
-                // Записываем собранные значения групп товаров в скрытое поле
-                const finalGroupsField = document.getElementById('final_product_groups');
-                finalGroupsField.value = finalGroups.join(',');
-                
-                console.log('Value set in final_product_groups:', finalGroupsField.value);
-
-                // Проверяем наличие выбранных групп
-                if (finalGroups.length === 0) {
-                    console.log('No groups selected!');
-                    alert('Выберите хотя бы одну группу товаров!');
-                    return false;
+            function hideOverlay() {
+                document.getElementById('overlay').style.display = 'none';
+                if (eventSource) {
+                    eventSource.close();
                 }
-
-                console.log('Form data ready for submission');
-                return true;
-            }
-
-            function addNewGroupContainer() {
-                const wrapper = document.getElementById('groups-wrapper');
-                
-                // Создаем новый контейнер
-                const newContainer = document.createElement('div');
-                newContainer.className = 'group-container';
-                newContainer.id = `group-container-${groupContainerCounter}`;
-                
-                const selectsDiv = document.createElement('div');
-                selectsDiv.className = 'group-selects';
-                
-                // Создаем новый select
-                const select = document.createElement('select');
-                select.id = `group-select-${groupContainerCounter}-0`;
-                select.name = 'temp_product_group';
-                
-                // Копируем все опции из оригинального селекта
-                const originalSelect = document.getElementById('group-select-0-0');
-                
-                // Клонируем все опции весте с их атрибутами
-                originalSelect.querySelectorAll('option').forEach(origOption => {
-                    const option = origOption.cloneNode(true);
-                    select.appendChild(option);
-                });
-                
-                // Привязываем обработчик события
-                select.addEventListener('change', function(event) {
-                    const currentContainer = parseInt(this.closest('.group-container').id.split('-').pop());
-                    loadSubgroups(this, 0, currentContainer);
-                    updateProductGroups();
-                });
-                
-                selectsDiv.appendChild(select);
-                newContainer.appendChild(selectsDiv);
-                wrapper.appendChild(newContainer);
-                
-                groupContainerCounter++;
-            }
-
-            function loadSubgroups(select, level, containerIndex) {
-                const groupContainer = select.closest('.group-container');
-                if (!groupContainer) return;
-
-                const selectsDiv = groupContainer.querySelector('.group-selects');
-                if (!selectsDiv) return;
-
-                const selects = Array.from(selectsDiv.getElementsByTagName('select'));
-                const currentSelectIndex = selects.indexOf(select);
-                
-                // Удаляем все следующие селекты после текущего
-                for (let i = selects.length - 1; i > currentSelectIndex; i--) {
-                    selectsDiv.removeChild(selects[i]);
-                }
-                
-                // Если выбрано путое значение, завершаем функцию после удаления селектов
-                const groupId = select.value;
-                if (!groupId) {
-                    updateProductGroups();
-                    return;
-                }
-                
-                const selectedOption = select.options[select.selectedIndex];
-                if (!selectedOption) {
-                    console.error('Selected option not found');
-                    return;
-                }
-
-                const childrenData = selectedOption.getAttribute('data-children');
-                if (!childrenData) {
-                    console.log('No children data found');
-                    return;
-                }
-
-                let children;
-                try {
-                    children = JSON.parse(childrenData);
-                } catch (e) {
-                    console.error('Error parsing children:', e);
-                    return;
-                }
-                
-                if (children && children.length > 0) {
-                    const newSelect = document.createElement('select');
-                    newSelect.id = `group-select-${containerIndex}-${level + 1}`;
-                    newSelect.name = 'temp_product_group';
-                    
-                    const defaultOption = document.createElement('option');
-                    defaultOption.value = "";
-                    defaultOption.textContent = "Выберите подгруппу";
-                    newSelect.appendChild(defaultOption);
-                    
-                    children.forEach(subgroup => {
-                        const option = document.createElement('option');
-                        option.value = subgroup.id;
-                        option.textContent = subgroup.name;
-                        if (subgroup.children) {
-                            option.setAttribute('data-children', JSON.stringify(subgroup.children));
-                        }
-                        newSelect.appendChild(option);
-                    });
-                    
-                    newSelect.addEventListener('change', function(event) {
-                        const currentContainer = parseInt(this.closest('.group-container').id.split('-').pop());
-                        const currentLevel = selects.length;
-                        loadSubgroups(this, currentLevel, currentContainer);
-                        updateProductGroups();
-                    });
-                    
-                    selectsDiv.appendChild(newSelect);
-                }
-                
-                updateProductGroups();
-            }
-
-            function updateProductGroups() {
-                const productGroupContainers = document.querySelectorAll('#groups-wrapper .group-container');
-                const finalGroups = [];
-
-                productGroupContainers.forEach(container => {
-                    const selects = container.querySelectorAll('select');
-                    let lastSelectedValue = '';
-
-                    // Проходим по всем селектам в контейнере
-                    for (let select of selects) {
-                        if (select.value && select.selectedOptions[0].text !== "Выберите подгруппу") {
-                            lastSelectedValue = select.value;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    // Добавляем значение только если оно не пустое
-                    if (lastSelectedValue) {
-                        finalGroups.push(lastSelectedValue);
-                    }
-                });
-
-                console.log('Updating product groups:', finalGroups);
-                document.getElementById('final_product_groups').value = finalGroups.join(',');
-            }
-
-            // Инициализация первого выпадающего списка
-            document.addEventListener('DOMContentLoaded', function() {
-                const firstSelect = document.getElementById('group-select-0-0');
-                if (firstSelect) {
-                    firstSelect.addEventListener('change', function(event) {
-                        loadSubgroups(this, 0, 0);
-                        updateProductGroups();
-                    });
-                }
-            });
-            
-            function startProcessing(form) {
-                console.log('Starting form processing...');
-                
-                if (!prepareFormData(form)) {
-                    console.log('Form data preparation failed');
-                    return false;
-                }
-                
-                console.log('Form data prepared successfully');
-                console.log('final_product_groups value:', document.getElementById('final_product_groups').value);
-                
-                document.getElementById('submitButton').style.display = 'block';
-                document.getElementById('processing-indicator').style.display = 'block';
-                processingCancelled = false;
-                
-                return true;
+                currentProcessing = false;
             }
 
             function stopProcessing() {
-                fetch('/cancel', { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.cancelled) {
-                            document.getElementById('processing-indicator').style.display = 'none';
-                            alert('Обработка остановлена');
-                        } else {
-                            console.error('Failed to stop processing');
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error stopping processing:', error);
-                    });
+                if (confirm('Вы уверены, что хотите остановить формирование отчетов?')) {
+                    if (eventSource) {
+                        eventSource.close();
+                    }
+                    hideOverlay();
+                    currentStoreIndex = stores.length; // Prevent further processing
+                    currentProcessing = false;
+                    
+                    // Send cancel request to server
+                    fetch('/cancel', { method: 'POST' })
+                        .then(response => console.log('Processing cancelled'))
+                        .catch(error => console.error('Error cancelling:', error));
+                }
             }
+
+            function processNextStore() {
+                if (currentStoreIndex >= stores.length) {
+                    hideOverlay();
+                    return;
+                }
+
+                const currentStore = stores[currentStoreIndex];
+                
+                // Update overlay title with progress
+                document.getElementById('overlayTitle').textContent = 
+                    `Формирование отчета ${currentStore.name} (${currentStoreIndex + 1} из ${stores.length})`;
+                document.getElementById('statusText').textContent = 'Подготовка к формированию отчета...';
+
+                const formData = new FormData(document.getElementById('reportForm'));
+                formData.delete('store_ids[]');
+                formData.append('store_id', currentStore.id);
+
+                if (eventSource) {
+                    eventSource.close();
+                }
+
+                // Start processing by sending POST request
+                fetch('/process', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data.success) {
+                        throw new Error(data.error || 'Unknown error occurred');
+                    }
+                    
+                    // After successful POST, open EventSource immediately
+                    let reconnectAttempts = 0;
+                    const maxReconnectAttempts = 3;
+                    let lastEventTime = Date.now();
+                    
+                    eventSource = new EventSource('/status-stream');
+                    
+                    eventSource.onopen = function() {
+                        console.log('EventSource connection opened');
+                        reconnectAttempts = 0;
+                        lastEventTime = Date.now();
+                    };
+                    
+                    eventSource.onmessage = function(event) {
+                        lastEventTime = Date.now();
+                        const remaining = event.data;
+                        
+                        if (remaining === '...') {
+                            document.getElementById('remainingItems').textContent = '...';
+                            document.getElementById('remainingTime').textContent = '...';
+                        } else {
+                            updateRemainingCount(parseInt(remaining));
+                        }
+                        
+                        // If processing is complete (remaining is 0)
+                        if (remaining === '0') {
+                            eventSource.close();
+                            
+                            // Create link and trigger download
+                            const link = document.createElement('a');
+                            link.href = data.file_url;
+                            link.download = '';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            
+                            document.getElementById('statusText').textContent = 'Отчет успешно сформирован';
+                            
+                            // Move to next store after 2 seconds
+                            setTimeout(() => {
+                                currentStoreIndex++;
+                                processNextStore();
+                            }, 2000);
+                        }
+                    };
+
+                    eventSource.onerror = function(error) {
+                        console.error('EventSource error:', error);
+                        const currentTime = Date.now();
+                        const timeSinceLastEvent = currentTime - lastEventTime;
+                        
+                        // If no events for 10 seconds
+                        if (timeSinceLastEvent > 10000) {
+                            reconnectAttempts++;
+                            console.log('No events for 10 seconds, reconnect attempt:', reconnectAttempts);
+                            
+                            if (reconnectAttempts >= maxReconnectAttempts) {
+                                console.log('Max reconnection attempts reached');
+                                document.getElementById('statusText').textContent = 'Не удалось получить данные. Переход к следующему складу...';
+                                eventSource.close();
+                                setTimeout(() => {
+                                    currentStoreIndex++;
+                                    processNextStore();
+                                }, 2000);
+                                return;
+                            }
+                            
+                            document.getElementById('statusText').textContent = `Переподключение... (попытка ${reconnectAttempts} из ${maxReconnectAttempts})`;
+                        }
+                    };
+
+                    // Add timer to check for hanging
+                    const checkStuckInterval = setInterval(() => {
+                        const currentTime = Date.now();
+                        const timeSinceLastEvent = currentTime - lastEventTime;
+                        
+                        // If no events for 30 seconds, consider process stuck
+                        if (timeSinceLastEvent > 30000) {
+                            console.log('Process seems stuck, moving to next store');
+                            clearInterval(checkStuckInterval);
+                            document.getElementById('statusText').textContent = 'Превышено время ожидания. Переход к следующему складу...';
+                            eventSource.close();
+                            setTimeout(() => {
+                                currentStoreIndex++;
+                                processNextStore();
+                            }, 2000);
+                        }
+                    }, 5000); // Check every 5 seconds
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('statusText').textContent = 'Ошибка при отправке запроса: ' + error.message;
+                    setTimeout(() => {
+                        currentStoreIndex++;
+                        processNextStore();
+                    }, 2000);
+                });
+            }
+
+            function updateRemainingCount(remaining) {
+                console.log('updateRemainingCount called with:', remaining);
+                const remainingItems = document.getElementById('remainingItems');
+                const remainingTime = document.getElementById('remainingTime');
+                const searchDays = parseInt(document.getElementById('search_days').value) || 300;
+                
+                if (remaining === undefined || remaining === null) {
+                    console.log('No remaining count provided');
+                    remainingItems.textContent = '...';
+                    remainingTime.textContent = '...';
+                    return;
+                }
+
+                // Преобразуем в число если пришла строка
+                remaining = parseInt(remaining);
+                if (isNaN(remaining)) {
+                    console.log('Invalid remaining count:', remaining);
+                    remainingItems.textContent = '...';
+                    remainingTime.textContent = '...';
+                    return;
+                }
+
+                // Обновляем количество оставшихся позиций
+                console.log('Setting remaining items:', remaining);
+                remainingItems.textContent = remaining.toString();
+                
+                // Рассчитываем оставшееся время
+                let timePerItem;
+                if (searchDays <= 300) {
+                    timePerItem = 1.4; // базовое время для 300 дней
+                } else if (searchDays <= 365) {
+                    timePerItem = 1.4 + ((searchDays - 300) * 0.0062);
+                } else {
+                    timePerItem = 1.4 + (65 * 0.0062) + ((searchDays - 365) * 0.0025);
+                }
+                
+                if (searchDays < 300) {
+                    timePerItem = (timePerItem * searchDays) / 300;
+                }
+                
+                const totalSeconds = Math.ceil(remaining * timePerItem);
+                console.log('Calculated total seconds:', totalSeconds);
+                
+                if (totalSeconds <= 0) {
+                    remainingTime.textContent = '0 сек';
+                } else {
+                    const hours = Math.floor(totalSeconds / 3600);
+                    const minutes = Math.floor((totalSeconds % 3600) / 60);
+                    const seconds = totalSeconds % 60;
+                    
+                    let timeString = '';
+                    if (hours > 0) timeString += hours + ' ч ';
+                    if (minutes > 0) timeString += minutes + ' мин ';
+                    if (seconds > 0 || timeString === '') timeString += seconds + ' сек';
+                    
+                    console.log('Setting remaining time:', timeString);
+                    remainingTime.textContent = timeString.trim();
+                }
+            }
+
+            // Add store button click handler
+            $('#add-store-btn').on('click', function() {
+                const newStoreGroup = $('.store-select-group').first().clone();
+                newStoreGroup.find('select').val('');
+                newStoreGroup.find('.remove-store-btn').show();
+                $('#stores-container').append(newStoreGroup);
+                updateRemoveStoreButtons();
+            });
+
+            // Remove store button click handler
+            $(document).on('click', '.remove-store-btn', function() {
+                $(this).closest('.store-select-group').remove();
+                updateRemoveStoreButtons();
+            });
+
+            function updateRemoveStoreButtons() {
+                const storeGroups = $('.store-select-group');
+                if (storeGroups.length > 1) {
+                    $('.remove-store-btn').show();
+                } else {
+                    $('.remove-store-btn').hide();
+                }
+            }
+
+            // Add event listeners
+            document.getElementById('stopButton').addEventListener('click', stopProcessing);
+
+            // Update form submission handler
+            document.getElementById('reportForm').onsubmit = function(e) {
+                e.preventDefault();
+                
+                if (currentProcessing) {
+                    return false;
+                }
+                
+                // Get all selected stores with their names
+                stores = Array.from(document.querySelectorAll('select[name="store_ids[]"]'))
+                    .filter(select => select.value !== '')
+                    .map(select => ({
+                        id: select.value,
+                        name: select.options[select.selectedIndex].text
+                    }));
+
+                if (stores.length === 0) {
+                    alert('Пожалуйста, выберите хотя бы один склад');
+                    return false;
+                }
+
+                currentStoreIndex = 0;
+                currentProcessing = true;
+                showOverlay();
+                processNextStore();
+                return false;
+            };
         });
     </script>
 </head>
 <body>
+    <div id="overlay" class="overlay">
+        <div class="status-box">
+            <h3 id="overlayTitle">Формирование отчета</h3>
+            <div id="processingStatus">
+                <div>Осталось обработать позиций: <span id="remainingItems">...</span></div>
+                <div style="margin-top: 10px;">Осталось примерно времени: <span id="remainingTime">...</span></div>
+            </div>
+            <div id="statusText">Подготовка к формированию отчета...</div>
+            <button id="stopButton" class="stop-button">Остановить</button>
+        </div>
+    </div>
+
     <div class="container">
         <div class="loading" style="display: none;">
             <div class="loading-content">
@@ -687,13 +646,19 @@
             </div>
             
             <div class="form-group">
-                <label for="store_id">Склад:</label>
-                <select id="store_id" name="store_id" required>
-                    <option value="">Выберите склад</option>
-                    {% for store in stores %}
-                    <option value="{{ store.id }}">{{ store.name }}</option>
-                    {% endfor %}
-                </select>
+                <label>Склады:</label>
+                <div id="stores-container">
+                    <div class="store-select-group" style="display: flex; align-items: center; margin-bottom: 10px;">
+                        <select class="store-select" name="store_ids[]" required style="flex: 1;">
+                            <option value="">Выберите склад</option>
+                            {% for store in stores %}
+                            <option value="{{ store.id }}">{{ store.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" class="remove-store-btn" style="display: none; margin-left: 10px; background-color: #ff4444; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; line-height: 24px; text-align: center; cursor: pointer;">×</button>
+                    </div>
+                </div>
+                <button type="button" id="add-store-btn" style="background-color: #4CAF50; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px;">+ Добавить склад</button>
             </div>
             
             <div class="form-group">
