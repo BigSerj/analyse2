@@ -1082,7 +1082,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     products_data.append({
                         'name': assortment.get('name', ''),
                         'quantity': item.get('sellQuantity', 0),
-                        'profit': round(item.get('profit', 0) / 100, 2),
+                        # 'profit': round(item.get('profit', 0) / 100, 2),
+                        'profit': round(item.get('profit', 0) / 100 / item.get('sellQuantity', 1), 2),  # Делим на количество
                         'sales_speed': display_sales_speed,
                         'forecast': sales_speed * planning_days,
                         'group_uuid': group_uuid,
@@ -1190,6 +1191,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                         current_row += 1
                         written_groups.add(group_key)
             
+            # print(f"7777777777:\n"+str(current_row))
             # При записи UUID товара
             if current_row > 2:
                 uuid_cell = ws.cell(row=current_row, column=max_depth)
@@ -1230,7 +1232,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         # Устанавливаем значение 30 в первой ячейке столбца forecast
         forecast_header = ws.cell(row=1, column=max_depth+6, value=30)
         forecast_header.font = Font(size=10)
-        
+
         # Добавляем формулы в каждую строку, где есть значение в столбце "Наименование"
         for row in range(2, current_row):
             name_cell = ws.cell(row=row, column=max_depth+1).value
@@ -1299,7 +1301,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         ws.row_dimensions[2].outline_level = 0  # Добавляем для пустой строки
 
         # Форматирование
-        ws.freeze_panes = ws['A2']  # Закрепляем только первую строку
+        # ws.freeze_panes = ws['A2']  # Закрепляем только первую строку
+        ws.freeze_panes = ws['A3']  # Закрепляем вторую строку
 
         # # Устанавливаем фиксированную ширину для столбцов уровней и наименования
         # # Для всех столбцов уровней (от первого до UUID не включительно)
@@ -1571,12 +1574,13 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 break
         
         if target_col and quantity_col and profit_col:
-            # Добавляем формулу во вторую строку
-            formula_cell = ws2.cell(row=2, column=target_col)
-            formula_cell.value = f"={quantity_col}2*{profit_col}2"
-            formula_cell.font = Font(size=10)
-            formula_cell.number_format = '0.00'
-            formula_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            # Добавляем формулу начиная с третьей строки до конца таблицы
+            for row in range(3, target_row):
+                formula_cell = ws2.cell(row=row, column=target_col)
+                formula_cell.value = f"=IF(SUBTOTAL(103;{quantity_col}{row})=0;0;{quantity_col}{row}*{profit_col}{row})"
+                formula_cell.font = Font(size=10)
+                formula_cell.number_format = '0.00'
+                formula_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
         # Добавляем формулу в столбец "Процент"
         percent_col = None
@@ -1588,12 +1592,13 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         if percent_col:
             # Получаем букву предыдущего столбца
             prev_col_letter = get_column_letter(percent_col - 1)
-            # Добавляем формулу
-            percent_cell = ws2.cell(row=2, column=percent_col)
-            percent_cell.value = f"={prev_col_letter}2*100/${prev_col_letter}$1"
-            percent_cell.font = Font(size=10)
-            percent_cell.number_format = '0.00'
-            percent_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            # Добавляем формулу начиная с третьей строки
+            for row in range(3, target_row):
+                percent_cell = ws2.cell(row=row, column=percent_col)
+                percent_cell.value = f"=IF(SUBTOTAL(103;{quantity_col}{row})=0;0;{prev_col_letter}{row}*100/${prev_col_letter}$1)"
+                percent_cell.font = Font(size=10)
+                percent_cell.number_format = '0.00'
+                percent_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
         # После копирования всех данных, обновляем заголовок столбца "30" формулой суммы
         for col in range(1, ws2.max_column + 1):
@@ -1618,22 +1623,16 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 # Устанавливаем ширину столбца
                 ws2.column_dimensions[new_col_letter].width = 15
                 
-                # Добавляем формулу только во вторую строку
+                # Добавляем формулу начиная с третьей строки
                 if percent_col:
                     percent_col_letter = get_column_letter(percent_col)
-                    sum_cell = ws2.cell(row=2, column=new_col)
-                    sum_cell.value = f"=SUM({percent_col_letter}$2:{percent_col_letter}2)"
-                    sum_cell.number_format = '0.00'
-                    sum_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-                    
-                    # Для строк с 3-й и далее копируем только форматирование
                     for row in range(3, target_row):
                         sum_cell = ws2.cell(row=row, column=new_col)
-                        sum_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                        sum_cell.value = f"=IF(SUBTOTAL(103;{quantity_col}{row})=0;0;SUM({percent_col_letter}$3:{percent_col_letter}{row}))"
                         sum_cell.number_format = '0.00'
+                        sum_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                        sum_cell.font = Font(size=10)
                         
-                        # Копируем только фон и границы из соседней ячейки
-                        # Копируем только фон и границы из соседней ячейки
                         # Копируем фон и границы из соседней ячейки
                         source_cell = ws2.cell(row=row, column=new_col-1)
                         if source_cell.fill and hasattr(source_cell.fill, 'start_color') and source_cell.fill.start_color:
