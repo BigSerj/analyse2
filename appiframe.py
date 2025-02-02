@@ -985,6 +985,33 @@ def create_hierarchical_sort_key(product):
     
     return path_components
 
+def truncate_filename(filename, max_length=255):
+    """
+    Обрезает имя файла до указанной максимальной длины, сохраняя расширение.
+    
+    Args:
+        filename (str): Исходное имя файла
+        max_length (int): Максимальная длина имени файла (по умолчанию 255 для большинства файловых систем)
+    
+    Returns:
+        str: Обрезанное имя файла
+    """
+    # Получаем расширение файла
+    name, ext = os.path.splitext(filename)
+    
+    # Если имя файла уже короче максимальной длины, возвращаем его как есть
+    if len(filename) <= max_length:
+        return filename
+    
+    # Вычисляем максимальную длину для основной части имени
+    # Учитываем длину расширения и добавляем '...'
+    max_name_length = max_length - len(ext) - 3
+    
+    # Обрезаем основную часть имени и добавляем '...' и расширение
+    truncated_name = name[:max_name_length] + '...' + ext
+    
+    return truncated_name
+
 def create_excel_report(data, store_id, start_date, end_date, planning_days, manual_stock_settings=None):
     try:
         print("Начало создания Excel отчета")
@@ -1058,8 +1085,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             if variant_id and item.get('sellQuantity', 0) > 0:  # Проверяем продажи сразу
                 print(f"Обработка позиции {assortment.get('name', '')} (sellQuantity: {item.get('sellQuantity', 0)})")
                 
-                # Передаем обе даты в функцию get_sales_speed
-                sales_speed, group_uuid, group_name, product_uuid, product_href = get_sales_speed(
+                # Используем только новый метод расчета скорости продаж
+                sales_speed, group_uuid, group_name, product_uuid, product_href = get_sales_speed_v2(
                     variant_id, store_id, start_date, end_date, is_variant
                 )
                 
@@ -1067,22 +1094,12 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     full_path, uuid_path = get_group_path(group_uuid, product_groups)
                     max_depth = max(max_depth, len(uuid_path))
                     
-                    # Находим количество знаков после запятой для отображения
-                    if sales_speed > 0:
-                        decimal_str = str(sales_speed).split('.')[-1]
-                        non_zero_count = 0
-                        for i, digit in enumerate(decimal_str):
-                            if digit != '0':
-                                non_zero_count = i + 2
-                                break
-                        display_sales_speed = round(sales_speed, non_zero_count)
-                    else:
-                        display_sales_speed = 0
+                    # Округляем скорость продаж до 2 знаков после запятой
+                    display_sales_speed = round(sales_speed, 2)
                     
                     products_data.append({
                         'name': assortment.get('name', ''),
                         'quantity': item.get('sellQuantity', 0),
-                        # 'profit': round(item.get('profit', 0) / 100, 2),
                         'profit': round(item.get('profit', 0) / 100 / item.get('sellQuantity', 1), 2),  # Делим на количество
                         'sales_speed': display_sales_speed,
                         'forecast': sales_speed * planning_days,
@@ -1749,6 +1766,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         
         # Формируем имя файла
         filename = f"{start_date_formatted}-{end_date_formatted} - {store_name} - {group_name_for_file}.xlsx"
+        # Обрезаем имя файла, если оно слишком длинное
+        filename = truncate_filename(filename)
         
         wb.save(filename)
         wb.close()
@@ -1832,6 +1851,168 @@ def update_processed_count():
             current_status['processed'] += 1
             remaining = current_status['total'] - current_status['processed']
             print(f"Обновлен счетчик: обработано {current_status['processed']} из {current_status['total']}, осталось {remaining}")
+
+def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
+    print(f"\nНачало расчета скорости продаж v2 для варианта {variant_id}")
+    total_start_time = time()
+    
+    url = f"{BASE_URL}/report/turnover/byoperations"
+    headers = {
+        'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
+        'Accept': 'application/json;charset=utf-8'
+    }
+    
+    # Преобразуем даты в datetime объекты
+    date_conversion_start = time()
+    end_datetime = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+    start_datetime = datetime.strptime(start_date, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
+    
+    # Создаем дату для поиска предыдущих продаж (100 дней до начала периода)
+    extended_start_datetime = start_datetime - timedelta(days=100)
+    
+    start_date_formatted = extended_start_datetime.strftime('%Y-%m-%d %H:%M:%S')
+    end_date_formatted = end_datetime.strftime('%Y-%m-%d %H:%M:%S')
+    print(f"Время на конвертацию дат: {(time() - date_conversion_start):.3f} сек")
+    print(f"Расширенный период поиска: с {start_date_formatted} по {end_date_formatted}")
+    
+    params = {
+        'momentFrom': start_date_formatted,
+        'momentTo': end_date_formatted,
+        'limit': 1000,
+        'order': 'moment,desc'  # Сортируем по убыванию для удобства поиска последней продажи
+    }
+    
+    assortment_type = 'variant' if is_variant else 'product'
+    filter_params = [
+        f"filter=store={BASE_URL}/entity/store/{store_id}",
+        f"filter={assortment_type}={BASE_URL}/entity/{assortment_type}/{variant_id}"
+    ]
+    
+    query_string = '&'.join([f"{k}={v}" for k, v in params.items()] + filter_params)
+    full_url = f"{url}?{query_string}"
+    
+    print(f"Запрос для получения операций: URL={full_url}")
+    
+    # Замер времени API запроса
+    api_request_start = time()
+    try:
+        response = requests.get(full_url, headers=headers, timeout=30)
+    except requests.exceptions.Timeout:
+        print(f"Timeout при запросе операций для варианта {variant_id}")
+        return 0, '', '', '', ''
+    except requests.exceptions.RequestException as e:
+        print(f"Ошибка при запросе операций для варианта {variant_id}: {str(e)}")
+        return 0, '', '', '', ''
+    
+    api_request_time = time() - api_request_start
+    print(f"Время выполнения API запроса: {api_request_time:.3f} сек")
+        
+    if response.status_code != 200:
+        print(f"Ошибка при получении данных: {response.status_code}. Ответ сервера: {response.text}")
+        return 0, '', '', '', ''
+
+    # Замер времени парсинга JSON
+    json_parse_start = time()
+    data = response.json()
+    json_parse_time = time() - json_parse_start
+    print(f"Время парсинга JSON: {json_parse_time:.3f} сек")
+    
+    if not data or 'rows' not in data:
+        print(f"Получен пустой ответ для варианта {variant_id}")
+        return 0, '', '', '', ''
+    
+    # Замер времени фильтрации строк
+    filter_start = time()
+    
+    # Получаем все продажи и конвертируем даты один раз
+    all_sales = []
+    for row in data.get('rows', []):
+        if (row['assortment']['meta']['href'].split('/')[-1] == variant_id and
+            row['operation']['meta']['type'] == 'retaildemand' and
+            row['quantity'] < 0):  # Продажи имеют отрицательное количество
+            sale_date = datetime.fromisoformat(row['operation']['moment'].replace('Z', '+00:00'))
+            all_sales.append((sale_date, row))
+    
+    # Сортируем все продажи по дате (по убыванию)
+    all_sales.sort(key=lambda x: x[0], reverse=True)
+    
+    # Находим продажи в указанном периоде
+    sales_in_period = [(date, row) for date, row in all_sales 
+                      if start_datetime <= date <= end_datetime]
+    
+    filter_time = time() - filter_start
+    print(f"Время фильтрации строк: {filter_time:.3f} сек")
+    
+    if not sales_in_period:
+        return 0, '', '', '', ''
+    
+    # Получение метаданных
+    metadata_start = time()
+    group_uuid = ''
+    group_name = ''
+    product_uuid = ''
+    product_href = ''
+    
+    assortment = sales_in_period[0][1].get('assortment', {})
+    product_folder = assortment.get('productFolder', {})
+    group_href = product_folder.get('meta', {}).get('href', '')
+    group_uuid = group_href.split('/')[-1] if group_href else ''
+    group_name = product_folder.get('name', '')
+    
+    product_meta = assortment.get('meta', {})
+    product_href = product_meta.get('uuidHref', '')
+    if product_href:
+        product_uuid = product_meta.get('href', '').split('/')[-1]
+    metadata_time = time() - metadata_start
+    print(f"Время обработки метаданных: {metadata_time:.3f} сек")
+    
+    # Расчет скорости продаж
+    calculation_start = time()
+    
+    # Находим date2 - последняя продажа в периоде
+    date2 = sales_in_period[0][0]  # Берем первую из отсортированных по убыванию
+    
+    # Находим date1 - последняя продажа до начала периода
+    # По умолчанию используем дату за 100 дней до начала периода
+    date1 = extended_start_datetime
+    
+    # Ищем последнюю продажу до начала периода
+    found_sale_before_period = False
+    for date, _ in all_sales:
+        if date < start_datetime:  # Ищем первую продажу, которая меньше даты начала периода
+            date1 = date
+            found_sale_before_period = True
+            break
+    
+    if not found_sale_before_period:
+        print("Не найдено продаж за 100 дней до начала периода, используем самую раннюю дату поиска")
+    
+    # Вычисляем разницу в днях
+    days = (date2 - date1).total_seconds() / (24 * 60 * 60)
+    
+    # Считаем общее количество проданных единиц за период
+    total_sold = sum(abs(row['quantity']) for _, row in sales_in_period)
+    
+    print(f"date1 ({'последняя продажа до периода' if found_sale_before_period else 'дата за 100 дней до начала периода'}): {date1}")
+    print(f"date2 (последняя продажа в периоде): {date2}")
+    print(f"Разница в днях: {days}")
+    print(f"Всего продано в периоде: {total_sold}")
+    
+    if days == 0:
+        # Если все продажи в один день, возвращаем общее количество проданных единиц
+        return total_sold, group_uuid, group_name, product_uuid, product_href
+    
+    # Вычисляем среднюю скорость продаж (количество единиц в день)
+    sales_speed = total_sold / days
+    
+    calculation_time = time() - calculation_start
+    print(f"Время расчета скорости продаж: {calculation_time:.3f} сек")
+    print(f"Средняя скорость продаж: {sales_speed} единиц в день")
+    
+    total_time = time() - total_start_time
+    print(f"\nОбщее время выполнения get_sales_speed_v2: {total_time:.3f} сек")
+    
+    return sales_speed, group_uuid, group_name, product_uuid, product_href
 
 if __name__ == '__main__':
     print("Starting Flask iframe app...")

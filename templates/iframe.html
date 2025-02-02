@@ -641,9 +641,11 @@
             </div>
             
             <div class="form-group">
-                <label for="search_days">Количество дней для поиска поступлений на склад до рассматриваемого периода:</label>
-                <input type="number" id="search_days" name="search_days" required min="1" value="300">
+                <label for="planning_days">Период планирования (дней):</label>
+                <input type="number" id="planning_days" name="planning_days" value="30" min="1" required>
             </div>
+            
+            <input type="hidden" id="search_days" name="search_days" value="300">
             
             <div class="form-group">
                 <label>Склады:</label>
@@ -683,7 +685,6 @@
                 <button type="button" class="add-group-btn" id="addGroupBtn">+ Добавить группу товаров</button>
                 <input type="hidden" name="final_product_groups" value="">
                 <input type="hidden" name="final_product_paths" value="">
-                <input type="hidden" name="planning_days" value="30">
             </div>
 
             <button type="submit" class="submit-btn">Сформировать отчет</button>
