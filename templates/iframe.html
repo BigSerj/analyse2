@@ -379,86 +379,106 @@
                 })
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error('Network response was not ok');
+                        throw new Error(`HTTP error! status: ${response.status}`);
                     }
                     return response.json();
                 })
                 .then(data => {
-                    if (!data.success) {
-                        throw new Error(data.error || 'Unknown error occurred');
+                    if (data.cancelled) {
+                        hideOverlay();
+                        return;
                     }
                     
-                    // After successful POST, open EventSource immediately
-                    let reconnectAttempts = 0;
-                    const maxReconnectAttempts = 3;
-                    let lastEventTime = Date.now();
+                    if (data.error) {
+                        document.getElementById('statusText').textContent = `Ошибка: ${data.error}`;
+                        setTimeout(() => {
+                            currentStoreIndex++;
+                            processNextStore();
+                        }, 2000);
+                        return;
+                    }
                     
+                    if (data.success && data.file_url) {
+                        // Create a temporary link to download the file
+                        const link = document.createElement('a');
+                        link.href = data.file_url;
+                        link.style.display = 'none';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        
+                        // Wait a bit to ensure download starts before moving to next store
+                        setTimeout(() => {
+                            currentStoreIndex++;
+                            processNextStore();
+                        }, 1000);
+                        return;
+                    }
+                    
+                    // Start event source for progress monitoring
                     eventSource = new EventSource('/status-stream');
-                    
-                    eventSource.onopen = function() {
-                        console.log('EventSource connection opened');
-                        reconnectAttempts = 0;
-                        lastEventTime = Date.now();
-                    };
+                    let lastEventTime = Date.now();
                     
                     eventSource.onmessage = function(event) {
                         lastEventTime = Date.now();
-                        const remaining = event.data;
+                        const data = event.data;
                         
-                        if (remaining === '...') {
+                        if (data === '...') {
                             document.getElementById('remainingItems').textContent = '...';
                             document.getElementById('remainingTime').textContent = '...';
                         } else {
-                            updateRemainingCount(parseInt(remaining));
-                        }
-                        
-                        // If processing is complete (remaining is 0)
-                        if (remaining === '0') {
-                            eventSource.close();
-                            
-                            // Create link and trigger download
-                            const link = document.createElement('a');
-                            link.href = data.file_url;
-                            link.download = '';
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
-                            
-                            document.getElementById('statusText').textContent = 'Отчет успешно сформирован';
-                            
-                            // Move to next store after 2 seconds
-                            setTimeout(() => {
-                                currentStoreIndex++;
-                                processNextStore();
-                            }, 2000);
-                        }
-                    };
-
-                    eventSource.onerror = function(error) {
-                        console.error('EventSource error:', error);
-                        const currentTime = Date.now();
-                        const timeSinceLastEvent = currentTime - lastEventTime;
-                        
-                        // If no events for 10 seconds
-                        if (timeSinceLastEvent > 10000) {
-                            reconnectAttempts++;
-                            console.log('No events for 10 seconds, reconnect attempt:', reconnectAttempts);
-                            
-                            if (reconnectAttempts >= maxReconnectAttempts) {
-                                console.log('Max reconnection attempts reached');
-                                document.getElementById('statusText').textContent = 'Не удалось получить данные. Переход к следующему складу...';
-                                eventSource.close();
-                                setTimeout(() => {
-                                    currentStoreIndex++;
-                                    processNextStore();
-                                }, 2000);
-                                return;
+                            try {
+                                const statusData = JSON.parse(data);
+                                const remainingNum = statusData.remaining;
+                                
+                                if (remainingNum > 0) {
+                                    document.getElementById('remainingItems').textContent = 
+                                        `${statusData.processed} из ${statusData.total}, осталось ${remainingNum}`;
+                                    
+                                    // Get search_days value
+                                    const searchDays = parseInt(document.getElementById('search_days').value) || 300;
+                                    
+                                    // Calculate time per item based on search days
+                                    let timePerItem;
+                                    if (searchDays <= 300) {
+                                        timePerItem = 1.4;
+                                    } else if (searchDays <= 365) {
+                                        timePerItem = 1.4 + ((searchDays - 300) * 0.0062);
+                                    } else {
+                                        timePerItem = 1.4 + (65 * 0.0062) + ((searchDays - 365) * 0.0025);
+                                    }
+                                    
+                                    if (searchDays < 300) {
+                                        timePerItem = (timePerItem * searchDays) / 300;
+                                    }
+                                    
+                                    const totalSeconds = Math.ceil(remainingNum * timePerItem);
+                                    
+                                    if (totalSeconds <= 0) {
+                                        document.getElementById('remainingTime').textContent = '0 сек';
+                                    } else {
+                                        const hours = Math.floor(totalSeconds / 3600);
+                                        const minutes = Math.floor((totalSeconds % 3600) / 60);
+                                        const seconds = totalSeconds % 60;
+                                        
+                                        let timeString = '';
+                                        if (hours > 0) timeString += hours + ' ч ';
+                                        if (minutes > 0) timeString += minutes + ' мин ';
+                                        if (seconds > 0 || timeString === '') timeString += seconds + ' сек';
+                                        
+                                        document.getElementById('remainingTime').textContent = timeString.trim();
+                                    }
+                                } else {
+                                    eventSource.close();
+                                }
+                            } catch (e) {
+                                console.error('Error parsing status data:', e);
+                                document.getElementById('remainingItems').textContent = '...';
+                                document.getElementById('remainingTime').textContent = '...';
                             }
-                            
-                            document.getElementById('statusText').textContent = `Переподключение... (попытка ${reconnectAttempts} из ${maxReconnectAttempts})`;
                         }
                     };
-
+                    
                     // Add timer to check for hanging
                     const checkStuckInterval = setInterval(() => {
                         const currentTime = Date.now();
@@ -485,66 +505,6 @@
                         processNextStore();
                     }, 2000);
                 });
-            }
-
-            function updateRemainingCount(remaining) {
-                console.log('updateRemainingCount called with:', remaining);
-                const remainingItems = document.getElementById('remainingItems');
-                const remainingTime = document.getElementById('remainingTime');
-                const searchDays = parseInt(document.getElementById('search_days').value) || 300;
-                
-                if (remaining === undefined || remaining === null) {
-                    console.log('No remaining count provided');
-                    remainingItems.textContent = '...';
-                    remainingTime.textContent = '...';
-                    return;
-                }
-
-                // Преобразуем в число если пришла строка
-                remaining = parseInt(remaining);
-                if (isNaN(remaining)) {
-                    console.log('Invalid remaining count:', remaining);
-                    remainingItems.textContent = '...';
-                    remainingTime.textContent = '...';
-                    return;
-                }
-
-                // Обновляем количество оставшихся позиций
-                console.log('Setting remaining items:', remaining);
-                remainingItems.textContent = remaining.toString();
-                
-                // Рассчитываем оставшееся время
-                let timePerItem;
-                if (searchDays <= 300) {
-                    timePerItem = 1.4; // базовое время для 300 дней
-                } else if (searchDays <= 365) {
-                    timePerItem = 1.4 + ((searchDays - 300) * 0.0062);
-                } else {
-                    timePerItem = 1.4 + (65 * 0.0062) + ((searchDays - 365) * 0.0025);
-                }
-                
-                if (searchDays < 300) {
-                    timePerItem = (timePerItem * searchDays) / 300;
-                }
-                
-                const totalSeconds = Math.ceil(remaining * timePerItem);
-                console.log('Calculated total seconds:', totalSeconds);
-                
-                if (totalSeconds <= 0) {
-                    remainingTime.textContent = '0 сек';
-                } else {
-                    const hours = Math.floor(totalSeconds / 3600);
-                    const minutes = Math.floor((totalSeconds % 3600) / 60);
-                    const seconds = totalSeconds % 60;
-                    
-                    let timeString = '';
-                    if (hours > 0) timeString += hours + ' ч ';
-                    if (minutes > 0) timeString += minutes + ' мин ';
-                    if (seconds > 0 || timeString === '') timeString += seconds + ' сек';
-                    
-                    console.log('Setting remaining time:', timeString);
-                    remainingTime.textContent = timeString.trim();
-                }
             }
 
             // Add store button click handler

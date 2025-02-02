@@ -130,21 +130,20 @@ def process():
                 
             excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days)
             
+            if excel_file is None:
+                return jsonify({'cancelled': True}), 200
+            
+            return jsonify({
+                'success': True, 
+                'file_url': f'/download/{excel_file}'
+            })
+            
         except Exception as e:
             print(f"Ошибка при обработке данных: {str(e)}")
             import traceback
             print("Полный стек ошибки:")
             print(traceback.format_exc())
             return jsonify({'error': str(e)}), 500
-        
-        # Финальная проверка отмены перед отправкой результата
-        if check_if_cancelled():
-            return jsonify({'cancelled': True}), 200
-            
-        return jsonify({
-            'success': True, 
-            'file_url': f'/download/{excel_file}'
-        })
             
     except Exception as e:
         print(f"Общая ошибка в process: {str(e)}")
@@ -1677,12 +1676,16 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
         start_date_formatted = start_date_obj.strftime('%d.%m.%Y')
         end_date_formatted = end_date_obj.strftime('%d.%m.%Y')
         
+        # Вычисляем дату за 100 дней до начала периода
+        extended_start_date = start_date_obj - timedelta(days=100)
+        extended_start_formatted = extended_start_date.strftime('%d.%m.%Y')
+        
         # Подготавливаем данные для информационного листа
         info_data = [
             ["Параметры анализа", ""],
             ["", ""],
             ["Период анализа:", f"с {start_date_formatted} по {end_date_formatted}"],
-            ["Количество дней для поиска поступлений на склад до рассматриваемого периода:", f"{request.form.get('search_days', '300')} дней"],
+            ["Дата начала поиска последней продажи перед Дата начала:", extended_start_formatted],
             ["Количество дней анализа:", f"{(end_date_obj - start_date_obj).days + 1} дней"],
             ["", ""],
             ["Магазин:", store_name],
@@ -1836,7 +1839,12 @@ def status_stream():
                     remaining = current_status['total'] - current_status['processed']
                     if current_status['processed'] != last_processed:
                         last_processed = current_status['processed']
-                        yield f"data: {remaining}\n\n"
+                        status_data = {
+                            'remaining': remaining,
+                            'processed': current_status['processed'],
+                            'total': current_status['total']
+                        }
+                        yield f"data: {json.dumps(status_data)}\n\n"
                     if remaining <= 0:
                         break
             # Добавляем небольшую задержку
