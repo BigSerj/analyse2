@@ -362,7 +362,7 @@
                 // Update overlay title with progress
                 document.getElementById('overlayTitle').textContent = 
                     `Формирование отчета ${currentStore.name} (${currentStoreIndex + 1} из ${stores.length})`;
-                document.getElementById('statusText').textContent = 'Подготовка к формированию отчета...';
+                document.getElementById('statusText').textContent = '';
 
                 const formData = new FormData(document.getElementById('reportForm'));
                 formData.delete('store_ids[]');
@@ -371,6 +371,60 @@
                 if (eventSource) {
                     eventSource.close();
                 }
+
+                // Start event source for progress monitoring
+                eventSource = new EventSource('/status-stream');
+                let lastEventTime = Date.now();
+                
+                eventSource.onmessage = function(event) {
+                    lastEventTime = Date.now();
+                    const data = event.data;
+                    
+                    if (data === '...') {
+                        document.getElementById('remainingItems').textContent = '...';
+                        document.getElementById('remainingTime').textContent = '...';
+                    } else {
+                        try {
+                            const statusData = JSON.parse(data);
+                            const remainingNum = statusData.remaining;
+                            
+                            if (remainingNum > 0) {
+                                document.getElementById('remainingItems').textContent = 
+                                    `${statusData.processed} из ${statusData.total}, осталось ${remainingNum}`;
+                                
+                                // Используем среднее время запроса из сервера
+                                const avgRequestTime = statusData.avg_request_time;
+                                // Вычисляем общее время в секундах и округляем до ближайших 10 секунд вверх
+                                const totalSeconds = Math.ceil(remainingNum * avgRequestTime / 10) * 10;
+                                
+                                if (totalSeconds <= 0) {
+                                    document.getElementById('remainingTime').textContent = 'менее 10 секунд';
+                                } else {
+                                    const hours = Math.floor(totalSeconds / 3600);
+                                    const minutes = Math.floor((totalSeconds % 3600) / 60);
+                                    const seconds = Math.floor(totalSeconds % 60);
+                                    
+                                    let timeString = '';
+                                    if (hours > 0) {
+                                        timeString += hours + ' ч ';
+                                        if (minutes > 0) timeString += minutes + ' мин';
+                                    } else if (minutes > 0) {
+                                        timeString += minutes + ' мин ';
+                                        if (seconds > 0) timeString += seconds + ' сек';
+                                    } else {
+                                        timeString += seconds + ' сек';
+                                    }
+                                    
+                                    document.getElementById('remainingTime').textContent = timeString.trim();
+                                }
+                            }
+                        } catch (e) {
+                            console.error('Error parsing status data:', e);
+                            document.getElementById('remainingItems').textContent = '...';
+                            document.getElementById('remainingTime').textContent = '...';
+                        }
+                    }
+                };
 
                 // Start processing by sending POST request
                 fetch('/process', {
@@ -384,6 +438,10 @@
                     return response.json();
                 })
                 .then(data => {
+                    if (eventSource) {
+                        eventSource.close();
+                    }
+                    
                     if (data.cancelled) {
                         hideOverlay();
                         return;
@@ -412,94 +470,14 @@
                             currentStoreIndex++;
                             processNextStore();
                         }, 1000);
-                        return;
                     }
-                    
-                    // Start event source for progress monitoring
-                    eventSource = new EventSource('/status-stream');
-                    let lastEventTime = Date.now();
-                    
-                    eventSource.onmessage = function(event) {
-                        lastEventTime = Date.now();
-                        const data = event.data;
-                        
-                        if (data === '...') {
-                            document.getElementById('remainingItems').textContent = '...';
-                            document.getElementById('remainingTime').textContent = '...';
-                        } else {
-                            try {
-                                const statusData = JSON.parse(data);
-                                const remainingNum = statusData.remaining;
-                                
-                                if (remainingNum > 0) {
-                                    document.getElementById('remainingItems').textContent = 
-                                        `${statusData.processed} из ${statusData.total}, осталось ${remainingNum}`;
-                                    
-                                    // Get search_days value
-                                    const searchDays = parseInt(document.getElementById('search_days').value) || 300;
-                                    
-                                    // Calculate time per item based on search days
-                                    let timePerItem;
-                                    if (searchDays <= 300) {
-                                        timePerItem = 1.4;
-                                    } else if (searchDays <= 365) {
-                                        timePerItem = 1.4 + ((searchDays - 300) * 0.0062);
-                                    } else {
-                                        timePerItem = 1.4 + (65 * 0.0062) + ((searchDays - 365) * 0.0025);
-                                    }
-                                    
-                                    if (searchDays < 300) {
-                                        timePerItem = (timePerItem * searchDays) / 300;
-                                    }
-                                    
-                                    const totalSeconds = Math.ceil(remainingNum * timePerItem);
-                                    
-                                    if (totalSeconds <= 0) {
-                                        document.getElementById('remainingTime').textContent = '0 сек';
-                                    } else {
-                                        const hours = Math.floor(totalSeconds / 3600);
-                                        const minutes = Math.floor((totalSeconds % 3600) / 60);
-                                        const seconds = totalSeconds % 60;
-                                        
-                                        let timeString = '';
-                                        if (hours > 0) timeString += hours + ' ч ';
-                                        if (minutes > 0) timeString += minutes + ' мин ';
-                                        if (seconds > 0 || timeString === '') timeString += seconds + ' сек';
-                                        
-                                        document.getElementById('remainingTime').textContent = timeString.trim();
-                                    }
-                                } else {
-                                    eventSource.close();
-                                }
-                            } catch (e) {
-                                console.error('Error parsing status data:', e);
-                                document.getElementById('remainingItems').textContent = '...';
-                                document.getElementById('remainingTime').textContent = '...';
-                            }
-                        }
-                    };
-                    
-                    // Add timer to check for hanging
-                    const checkStuckInterval = setInterval(() => {
-                        const currentTime = Date.now();
-                        const timeSinceLastEvent = currentTime - lastEventTime;
-                        
-                        // If no events for 30 seconds, consider process stuck
-                        if (timeSinceLastEvent > 30000) {
-                            console.log('Process seems stuck, moving to next store');
-                            clearInterval(checkStuckInterval);
-                            document.getElementById('statusText').textContent = 'Превышено время ожидания. Переход к следующему складу...';
-                            eventSource.close();
-                            setTimeout(() => {
-                                currentStoreIndex++;
-                                processNextStore();
-                            }, 2000);
-                        }
-                    }, 5000); // Check every 5 seconds
                 })
                 .catch(error => {
                     console.error('Error:', error);
                     document.getElementById('statusText').textContent = 'Ошибка при отправке запроса: ' + error.message;
+                    if (eventSource) {
+                        eventSource.close();
+                    }
                     setTimeout(() => {
                         currentStoreIndex++;
                         processNextStore();
@@ -569,10 +547,10 @@
         <div class="status-box">
             <h3 id="overlayTitle">Формирование отчета</h3>
             <div id="processingStatus">
-                <div>Осталось обработать позиций: <span id="remainingItems">...</span></div>
-                <div style="margin-top: 10px;">Осталось примерно времени: <span id="remainingTime">...</span></div>
+                <div>Обработка позиций: <span id="remainingItems">...</span></div>
+                <div style="margin-top: 10px;">Осталось менее: <span id="remainingTime">...</span></div>
             </div>
-            <div id="statusText">Подготовка к формированию отчета...</div>
+            <div id="statusText"></div>
             <button id="stopButton" class="stop-button">Остановить</button>
         </div>
     </div>

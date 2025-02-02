@@ -29,6 +29,9 @@ processing_lock = threading.Lock()
 # Добавим глобальную переменную для хранения статуса
 current_status = {'total': 0, 'processed': 0}
 
+# Добавляем глобальную переменную для хранения времени запросов
+api_request_times = []
+
 def check_if_cancelled():
     """Проверяет, не была ли отменена обработка отчета"""
     global processing_cancelled
@@ -70,10 +73,11 @@ def iframe():
 @app.route('/process', methods=['POST'])
 def process():
     try:
-        global processing_cancelled, current_status
+        global processing_cancelled, current_status, api_request_times
         with processing_lock:
             processing_cancelled = False
             current_status = {'total': 0, 'processed': 0}
+            api_request_times = []  # Сбрасываем список времени запросов
         
         start_date = request.form['start_date']
         end_date = request.form['end_date']
@@ -83,7 +87,6 @@ def process():
         product_groups = []
         if 'final_product_groups' in request.form:
             raw_groups = request.form.get('final_product_groups', '')
-            # Разбиваем строку с группами на отдельные ID
             if raw_groups:
                 product_groups = [group.strip() for group in raw_groups.split(',') if group.strip()]
             print(f"Обработанные группы: {product_groups}")
@@ -124,17 +127,13 @@ def process():
                 current_status['total'] = total_items
                 current_status['processed'] = 0
             
-            # Проверяем отмену перед созданием отчета
-            if check_if_cancelled():
-                return jsonify({'cancelled': True}), 200
-                
             excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days)
             
             if excel_file is None:
                 return jsonify({'cancelled': True}), 200
-            
+                
             return jsonify({
-                'success': True, 
+                'success': True,
                 'file_url': f'/download/{excel_file}'
             })
             
@@ -147,6 +146,37 @@ def process():
             
     except Exception as e:
         print(f"Общая ошибка в process: {str(e)}")
+        import traceback
+        print("Полный стек ошибки:")
+        print(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+# Добавляем новый маршрут для создания Excel-файла
+@app.route('/create_excel', methods=['POST'])
+def create_excel():
+    try:
+        start_date = request.form['start_date']
+        end_date = request.form['end_date']
+        store_id = request.form['store_id']
+        planning_days = int(request.form['planning_days'])
+        
+        report_data = get_report_data(start_date, end_date, store_id, [])
+        
+        if not report_data or 'rows' not in report_data:
+            return jsonify({'error': 'Нет данных для формирования отчета'}), 404
+            
+        excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days)
+        
+        if excel_file is None:
+            return jsonify({'cancelled': True}), 200
+            
+        return jsonify({
+            'success': True,
+            'file_url': f'/download/{excel_file}'
+        })
+        
+    except Exception as e:
+        print(f"Ошибка при создании Excel-файла: {str(e)}")
         import traceback
         print("Полный стек ошибки:")
         print(traceback.format_exc())
@@ -286,7 +316,7 @@ def embed():
         <div id="statusBox" class="status-box hidden">
             <h3>Формирование отчета</h3>
             <div>Осталось обработать позиций: <span id="remainingItems">...</span></div>
-            <div style="margin-top: 10px;">Осталось примерно времени: <span id="remainingTime">...</span></div>
+            <div style="margin-top: 10px;">Осталось менее: <span id="remainingTime">...</span></div>
             <button class="stop-button" onclick="showConfirmModal()">Остановить</button>
         </div>
         <div id="confirmModal" class="confirm-modal">
@@ -1839,15 +1869,17 @@ def status_stream():
                     remaining = current_status['total'] - current_status['processed']
                     if current_status['processed'] != last_processed:
                         last_processed = current_status['processed']
+                        # Вычисляем среднее время запроса
+                        avg_time = sum(api_request_times) / len(api_request_times) if api_request_times else 0.9
                         status_data = {
                             'remaining': remaining,
                             'processed': current_status['processed'],
-                            'total': current_status['total']
+                            'total': current_status['total'],
+                            'avg_request_time': avg_time
                         }
                         yield f"data: {json.dumps(status_data)}\n\n"
                     if remaining <= 0:
                         break
-            # Добавляем небольшую задержку
             sleep(0.1)
     return Response(generate(), mimetype='text/event-stream')
 
@@ -1858,7 +1890,10 @@ def update_processed_count():
         if current_status['total'] > 0:  # Проверяем, что счетчик инициализирован
             current_status['processed'] += 1
             remaining = current_status['total'] - current_status['processed']
+            # Вычисляем среднее время запроса
+            avg_time = sum(api_request_times) / len(api_request_times) if api_request_times else 0.9
             print(f"Обновлен счетчик: обработано {current_status['processed']} из {current_status['total']}, осталось {remaining}")
+            print(f"Среднее время запроса: {avg_time:.3f} сек")
 
 def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     print(f"\nНачало расчета скорости продаж v2 для варианта {variant_id}")
@@ -1914,7 +1949,9 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     
     api_request_time = time() - api_request_start
     print(f"Время выполнения API запроса: {api_request_time:.3f} сек")
-        
+    # Добавляем время запроса в список
+    api_request_times.append(api_request_time)
+    
     if response.status_code != 200:
         print(f"Ошибка при получении данных: {response.status_code}. Ответ сервера: {response.text}")
         return 0, '', '', '', ''
