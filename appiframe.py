@@ -1750,8 +1750,8 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     clean_path_parts = [part.strip() for part in path.strip().split('/')]
                     selected_groups.append('/'.join(clean_path_parts))
                     # Добавляем название второго уровня, если оно есть
-                    if len(clean_path_parts) > 1:
-                        second_level_names.append(clean_path_parts[1])
+                    if len(clean_path_parts) > 2:
+                        second_level_names.append(clean_path_parts[2])
         
         # Формируем имя файла, используя названия второго уровня
         group_name_for_file = "Все группы"
@@ -2019,7 +2019,8 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     
     # Находим date1 - последняя продажа до начала периода
     # По умолчанию используем дату за 100 дней до начала периода
-    date1 = extended_start_datetime
+    # date1 = extended_start_datetime
+    date1 = start_datetime
     
     # Ищем последнюю продажу до начала периода
     found_sale_before_period = False
@@ -2038,7 +2039,8 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     # Считаем общее количество проданных единиц за период
     total_sold = sum(abs(row['quantity']) for _, row in sales_in_period)
     
-    print(f"date1 ({'последняя продажа до периода' if found_sale_before_period else 'дата за 100 дней до начала периода'}): {date1}")
+    # print(f"date1 ({'последняя продажа до периода' if found_sale_before_period else 'дата за 100 дней до начала периода'}): {date1}")
+    print(f"date1 ({'последняя продажа до периода' if found_sale_before_period else 'дата начала периода'}): {date1}")
     print(f"date2 (последняя продажа в периоде): {date2}")
     print(f"Разница в днях: {days}")
     print(f"Всего продано в периоде: {total_sold}")
