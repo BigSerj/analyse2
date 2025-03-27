@@ -1796,14 +1796,21 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     # Разбиваем путь на части, очищаем каждую часть
                     clean_path_parts = [part.strip() for part in path.strip().split('/')]
                     selected_groups.append('/'.join(clean_path_parts))
-                    # Добавляем название второго уровня, если оно есть
-                    if len(clean_path_parts) > 2:
-                        second_level_names.append(clean_path_parts[2])
-        
+                    
+                    # Проверяем уровни групп
+                    if len(clean_path_parts) >= 2:  # Убеждаемся, что есть хотя бы два уровня
+                        if len(clean_path_parts) == 2 or (len(clean_path_parts) > 2 and clean_path_parts[2] == "Выберите подгруппу"):
+                            # Если это группа второго уровня или третий уровень не выбран
+                            second_level_names.append(clean_path_parts[1])
+                        elif len(clean_path_parts) > 2:
+                            # Если выбран третий уровень
+                            second_level_names.append(clean_path_parts[2])
+
         # Формируем имя файла, используя названия второго уровня
         group_name_for_file = "Все группы"
         if second_level_names:
             group_name_for_file = ','.join(second_level_names)
+            print(f"Название файла будет содержать группы: {group_name_for_file}")  # Добавляем для отладки
         
         # Добавляем выбранные группы в информационный лист
         if selected_groups:
