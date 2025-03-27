@@ -660,6 +660,9 @@ def get_report_data(start_date, end_date, store_id, product_groups):
         all_rows = []
         total_count = None
         
+        # Создаем словарь для кэширования результатов анализа компонентов
+        component_cache = {}
+        
         while True:
             check_if_cancelled()
             
@@ -692,25 +695,61 @@ def get_report_data(start_date, end_date, store_id, product_groups):
                 total_count = data.get('meta', {}).get('size', 0)
                 print(f"Всего записей: {total_count}")
             
-            all_rows.extend(data.get('rows', []))
+            # Обрабатываем каждую строку из ответа
+            for item in data.get('rows', []):
+                assortment = item.get('assortment', {})
+                assortment_meta = assortment.get('meta', {})
+                assortment_type = assortment_meta.get('type', '')
+                assortment_href = assortment_meta.get('href', '')
+                
+                # Если это комплект
+                if assortment_type == 'bundle':
+                    print(f"\nОбработка комплекта: {assortment.get('name', '')}")
+                    # Получаем компоненты комплекта
+                    components = get_bundle_components(assortment_href)
+                    
+                    # Считаем общее количество компонентов для распределения прибыли
+                    total_components_quantity = sum(c['quantity'] for c in components)
+                    
+                    # Обрабатываем каждый компонент
+                    for component in components:
+                        component_assortment = component.get('assortment', {})
+                        component_meta = component_assortment.get('meta', {})
+                        component_href = component_meta.get('href', '')
+                        component_quantity = component.get('quantity', 0)
+                        
+                        # Вычисляем долю прибыли для этого компонента
+                        component_profit_share = item['profit'] * (component_quantity / total_components_quantity)
+                        
+                        # Проверяем кэш
+                        if component_href in component_cache:
+                            print(f"Суммируем данные для компонента: {component_assortment.get('name', '')}")
+                            cached_item = component_cache[component_href]
+                            # Суммируем количество и прибыль
+                            cached_item['sellQuantity'] += item['sellQuantity'] * component_quantity
+                            cached_item['profit'] += component_profit_share
+                        else:
+                            print(f"Создаем новую запись для компонента: {component_assortment.get('name', '')}")
+                            # Создаем новую запись для компонента
+                            component_item = {
+                                'assortment': component_assortment,
+                                'sellQuantity': item['sellQuantity'] * component_quantity,
+                                'profit': component_profit_share
+                            }
+                            component_cache[component_href] = component_item
+                        
+                else:
+                    # Если это не комплект, добавляем как есть
+                    all_rows.append(item)
             
-            if len(all_rows) >= total_count:
+            if len(data.get('rows', [])) < params['limit']:
                 break
             
             params['offset'] += params['limit']
         
-        # Собираем все variant_ids для одного запроса
-        variant_ids = []
-        for item in data.get('rows', []):
-            assortment = item.get('assortment', {})
-            assortment_meta = assortment.get('meta', {})
-            assortment_href = assortment_meta.get('href', '')
-            
-            is_variant = '/variant/' in assortment_href
-            variant_id = assortment_href.split('/variant/')[-1] if is_variant else assortment_href.split('/product/')[-1]
-            if variant_id:
-                variant_ids.append(variant_id)
-    
+        # Добавляем накопленные данные компонентов в общий список
+        for cached_item in component_cache.values():
+            all_rows.append(cached_item)
         
         return {'meta': data.get('meta', {}), 'rows': all_rows}
         
@@ -718,7 +757,6 @@ def get_report_data(start_date, end_date, store_id, product_groups):
         if str(e) == "Processing cancelled by user":
             abort(499, description="Processing cancelled by user")
         raise e
-
 
 def get_sales_speed(variant_id, store_id, start_date, end_date, is_variant):
     print(f"\nНачало расчета скорости продаж для варианта {variant_id}")
@@ -1107,11 +1145,20 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
             assortment = item.get('assortment', {})
             assortment_meta = assortment.get('meta', {})
             assortment_href = assortment_meta.get('href', '')
+            assortment_type = assortment_meta.get('type', '')
             
-            is_variant = '/variant/' in assortment_href
-            variant_id = assortment_href.split('/variant/')[-1] if is_variant else assortment_href.split('/product/')[-1]
+            # Определяем тип и ID
+            is_variant = assortment_type == 'variant' or '/variant/' in assortment_href
+            is_product = assortment_type == 'product' or '/product/' in assortment_href
             
-            if variant_id and item.get('sellQuantity', 0) > 0:  # Проверяем продажи сразу
+            if is_variant:
+                variant_id = assortment_href.split('/variant/')[-1]
+            elif is_product:
+                variant_id = assortment_href.split('/product/')[-1]
+            else:
+                continue  # Пропускаем неподдерживаемые типы
+            
+            if variant_id and item.get('sellQuantity', 0) > 0:  # Проверяем продажи
                 print(f"Обработка позиции {assortment.get('name', '')} (sellQuantity: {item.get('sellQuantity', 0)})")
                 
                 # Используем только новый метод расчета скорости продаж
@@ -2060,6 +2107,45 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     print(f"\nОбщее время выполнения get_sales_speed_v2: {total_time:.3f} сек")
     
     return sales_speed, group_uuid, group_name, product_uuid, product_href
+
+def get_bundle_components(bundle_href):
+    """
+    Получает компоненты комплекта по его href.
+    
+    Args:
+        bundle_href (str): Ссылка на комплект
+    
+    Returns:
+        list: Список компонентов комплекта (только товары и модификации)
+    """
+    components_url = f"{bundle_href}/components"
+    headers = {
+        'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
+        'Accept': 'application/json;charset=utf-8'
+    }
+    
+    try:
+        response = requests.get(components_url, headers=headers, timeout=30)
+        if response.status_code != 200:
+            print(f"Ошибка при получении компонентов комплекта: {response.status_code}")
+            return []
+            
+        data = response.json()
+        if not data or 'rows' not in data:
+            return []
+            
+        # Фильтруем только товары и модификации
+        valid_components = []
+        for component in data['rows']:
+            assortment_type = component.get('assortment', {}).get('meta', {}).get('type', '')
+            if assortment_type in ['variant', 'product']:
+                valid_components.append(component)
+                
+        return valid_components
+        
+    except Exception as e:
+        print(f"Ошибка при получении компонентов комплекта: {str(e)}")
+        return []
 
 if __name__ == '__main__':
     print("Starting Flask iframe app...")
