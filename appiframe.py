@@ -1162,7 +1162,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                 print(f"Обработка позиции {assortment.get('name', '')} (sellQuantity: {item.get('sellQuantity', 0)})")
                 
                 # Используем только новый метод расчета скорости продаж
-                sales_speed, group_uuid, group_name, product_uuid, product_href = get_sales_speed_v2(
+                sales_speed, group_uuid, group_name, product_uuid, product_href, assortment_name = get_sales_speed_v2(
                     variant_id, store_id, start_date, end_date, is_variant
                 )
                 
@@ -1174,7 +1174,7 @@ def create_excel_report(data, store_id, start_date, end_date, planning_days, man
                     display_sales_speed = round(sales_speed, 2)
                     
                     products_data.append({
-                        'name': assortment.get('name', ''),
+                        'name': assortment_name,  # Используем имя из ответа API
                         'quantity': item.get('sellQuantity', 0),
                         'profit': round(item.get('profit', 0) / 100 / item.get('sellQuantity', 1), 2),  # Делим на количество
                         'sales_speed': display_sales_speed,
@@ -1989,10 +1989,10 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
         response = requests.get(full_url, headers=headers, timeout=30)
     except requests.exceptions.Timeout:
         print(f"Timeout при запросе операций для варианта {variant_id}")
-        return 0, '', '', '', ''
+        return 0, '', '', '', '', ''  # Добавляем пустую строку для имени
     except requests.exceptions.RequestException as e:
         print(f"Ошибка при запросе операций для варианта {variant_id}: {str(e)}")
-        return 0, '', '', '', ''
+        return 0, '', '', '', '', ''  # Добавляем пустую строку для имени
     
     api_request_time = time() - api_request_start
     print(f"Время выполнения API запроса: {api_request_time:.3f} сек")
@@ -2001,7 +2001,7 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     
     if response.status_code != 200:
         print(f"Ошибка при получении данных: {response.status_code}. Ответ сервера: {response.text}")
-        return 0, '', '', '', ''
+        return 0, '', '', '', '', ''  # Добавляем пустую строку для имени
 
     # Замер времени парсинга JSON
     json_parse_start = time()
@@ -2009,9 +2009,13 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     json_parse_time = time() - json_parse_start
     print(f"Время парсинга JSON: {json_parse_time:.3f} сек")
     
-    if not data or 'rows' not in data:
+    if not data or 'rows' not in data or not data['rows']:
         print(f"Получен пустой ответ для варианта {variant_id}")
-        return 0, '', '', '', ''
+        return 0, '', '', '', '', ''  # Добавляем пустую строку для имени
+    
+    # Получаем имя из первой строки ответа
+    assortment_name = data['rows'][0]['assortment']['name']
+    print(f"Получено наименование: {assortment_name}")
     
     # Замер времени фильтрации строк
     filter_start = time()
@@ -2036,7 +2040,7 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     print(f"Время фильтрации строк: {filter_time:.3f} сек")
     
     if not sales_in_period:
-        return 0, '', '', '', ''
+        return 0, '', '', '', '', assortment_name  # Возвращаем имя даже если нет продаж
     
     # Получение метаданных
     metadata_start = time()
@@ -2065,8 +2069,6 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     date2 = sales_in_period[0][0]  # Берем первую из отсортированных по убыванию
     
     # Находим date1 - последняя продажа до начала периода
-    # По умолчанию используем дату за 100 дней до начала периода
-    # date1 = extended_start_datetime
     date1 = start_datetime
     
     # Ищем последнюю продажу до начала периода
@@ -2086,7 +2088,6 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     # Считаем общее количество проданных единиц за период
     total_sold = sum(abs(row['quantity']) for _, row in sales_in_period)
     
-    # print(f"date1 ({'последняя продажа до периода' if found_sale_before_period else 'дата за 100 дней до начала периода'}): {date1}")
     print(f"date1 ({'последняя продажа до периода' if found_sale_before_period else 'дата начала периода'}): {date1}")
     print(f"date2 (последняя продажа в периоде): {date2}")
     print(f"Разница в днях: {days}")
@@ -2094,7 +2095,7 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     
     if days == 0:
         # Если все продажи в один день, возвращаем общее количество проданных единиц
-        return total_sold, group_uuid, group_name, product_uuid, product_href
+        return total_sold, group_uuid, group_name, product_uuid, product_href, assortment_name
     
     # Вычисляем среднюю скорость продаж (количество единиц в день)
     sales_speed = total_sold / days
@@ -2106,7 +2107,7 @@ def get_sales_speed_v2(variant_id, store_id, start_date, end_date, is_variant):
     total_time = time() - total_start_time
     print(f"\nОбщее время выполнения get_sales_speed_v2: {total_time:.3f} сек")
     
-    return sales_speed, group_uuid, group_name, product_uuid, product_href
+    return sales_speed, group_uuid, group_name, product_uuid, product_href, assortment_name
 
 def get_bundle_components(bundle_href):
     """
