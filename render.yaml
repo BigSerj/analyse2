@@ -3,7 +3,13 @@ services:
     name: flask-app
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --log-level debug --timeout 120
+    startCommand: >
+      gunicorn wsgi:app 
+      --bind 0.0.0.0:$PORT 
+      --log-level debug 
+      --timeout 300 
+      --workers 1 
+      --threads 4
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0

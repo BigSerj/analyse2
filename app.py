@@ -79,77 +79,99 @@ def prepare_groups_for_js(groups):
 @app.route('/process', methods=['POST'])
 def process():
     try:
+        print("Начало обработки запроса process")
+        print("Полученные данные формы:", request.form)
+        
         global processing_cancelled, current_status, api_request_times
         with processing_lock:
             processing_cancelled = False
             current_status = {'total': 0, 'processed': 0}
             api_request_times = []
         
+        # Проверяем наличие необходимых полей
+        required_fields = ['start_date', 'end_date', 'store_ids[]', 'planning_days']
+        for field in required_fields:
+            if field not in request.form:
+                error_msg = f"Отсутствует обязательное поле: {field}"
+                print(error_msg)
+                return jsonify({'error': error_msg}), 400
+        
         start_date = request.form['start_date']
         end_date = request.form['end_date']
-        store_id = request.form['store_id']
+        store_ids = request.form.getlist('store_ids[]')  # Получаем список складов
         planning_days = int(request.form['planning_days'])
         
-        product_groups = []
-        if 'final_product_groups' in request.form:
-            raw_groups = request.form.get('final_product_groups', '')
-            if raw_groups:
-                product_groups = [group.strip() for group in raw_groups.split(',') if group.strip()]
-            print(f"Обработанные группы: {product_groups}")
+        print(f"Получены параметры: даты {start_date}-{end_date}, склады {store_ids}, период {planning_days}")
         
-        # Проверяем отмену перед получением данных
-        if check_if_cancelled():
-            return jsonify({'cancelled': True}), 200
+        # Обработка для каждого склада
+        for store_id in store_ids:
+            if not store_id:
+                continue
+                
+            print(f"Обработка склада {store_id}")
             
-        try:
-            report_data = get_report_data(start_date, end_date, store_id, product_groups)
-            print("Получены данные отчета:", report_data is not None)
-            if report_data:
-                print(f"Количество строк в отчете: {len(report_data.get('rows', []))}")
-        except Exception as e:
-            print(f"Ошибка при получении данных отчета: {str(e)}")
-            import traceback
-            print("Полный стек ошибки:")
-            print(traceback.format_exc())
-            return jsonify({'error': str(e)}), 500
-        
-        if not report_data or 'rows' not in report_data or not report_data['rows']:
-            return jsonify({'error': 'Нет данных для формирования отчета'}), 404
-        
-        # Проверяем отмену после получения данных
-        if check_if_cancelled():
-            return jsonify({'cancelled': True}), 200
+            product_groups = []
+            if 'final_product_groups' in request.form:
+                raw_groups = request.form.get('final_product_groups', '')
+                if raw_groups:
+                    product_groups = [group.strip() for group in raw_groups.split(',') if group.strip()]
+                print(f"Обработанные группы: {product_groups}")
             
-        try:
-            # Считаем только позиции с продажами и вариантами
-            total_items = sum(1 for item in report_data['rows'] 
-                            if item.get('sellQuantity', 0) > 0 
-                            and ('/variant/' in item.get('assortment', {}).get('meta', {}).get('href', '') 
-                                or '/product/' in item.get('assortment', {}).get('meta', {}).get('href', '')))
-            
-            print(f"Всего позиций для обработки: {total_items}")
-            
-            with processing_lock:
-                current_status['total'] = total_items
-                current_status['processed'] = 0
-            
-            excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days)
-            
-            if excel_file is None:
+            # Проверяем отмену перед получением данных
+            if check_if_cancelled():
                 return jsonify({'cancelled': True}), 200
                 
-            return jsonify({
-                'success': True,
-                'file_url': f'/download/{excel_file}'
-            })
+            try:
+                report_data = get_report_data(start_date, end_date, store_id, product_groups)
+                print("Получены данные отчета:", report_data is not None)
+                if report_data:
+                    print(f"Количество строк в отчете: {len(report_data.get('rows', []))}")
+            except Exception as e:
+                print(f"Ошибка при получении данных отчета: {str(e)}")
+                import traceback
+                print("Полный стек ошибки:")
+                print(traceback.format_exc())
+                return jsonify({'error': str(e)}), 500
             
-        except Exception as e:
-            print(f"Ошибка при обработке данных: {str(e)}")
-            import traceback
-            print("Полный стек ошибки:")
-            print(traceback.format_exc())
-            return jsonify({'error': str(e)}), 500
+            if not report_data or 'rows' not in report_data or not report_data['rows']:
+                print("Нет данных для формирования отчета")
+                continue
             
+            # Проверяем отмену после получения данных
+            if check_if_cancelled():
+                return jsonify({'cancelled': True}), 200
+                
+            try:
+                # Считаем только позиции с продажами и вариантами
+                total_items = sum(1 for item in report_data['rows'] 
+                                if item.get('sellQuantity', 0) > 0 
+                                and ('/variant/' in item.get('assortment', {}).get('meta', {}).get('href', '') 
+                                    or '/product/' in item.get('assortment', {}).get('meta', {}).get('href', '')))
+                
+                print(f"Всего позиций для обработки: {total_items}")
+                
+                with processing_lock:
+                    current_status['total'] = total_items
+                    current_status['processed'] = 0
+                
+                excel_file = create_excel_report(report_data, store_id, start_date, end_date, planning_days)
+                
+                if excel_file is None:
+                    return jsonify({'cancelled': True}), 200
+                    
+                print(f"Создан файл отчета: {excel_file}")
+                return jsonify({
+                    'success': True,
+                    'file_url': f'/download/{excel_file}'
+                })
+                
+            except Exception as e:
+                print(f"Ошибка при обработке данных: {str(e)}")
+                import traceback
+                print("Полный стек ошибки:")
+                print(traceback.format_exc())
+                return jsonify({'error': str(e)}), 500
+                
     except Exception as e:
         print(f"Общая ошибка в process: {str(e)}")
         import traceback
