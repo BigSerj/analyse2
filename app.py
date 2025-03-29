@@ -30,7 +30,9 @@ def render_group_options(groups, level=0):
     for group in groups:
         indent = '—' * level
         # result.append(f'<option value="{group["id"]}" {"class=\"nested-select\"" if level > 0 else ""} style="margin-left: {level * 20}px;">{indent} {group["name"]}</option>')
-        result.append(f'<option value="{group["id"]}" { 'class="nested-select"' if level > 0 else '' } style="margin-left: {level * 20}px;">{indent} {group["name"]}</option>')
+        # result.append(f'<option value="{group["id"]}" { 'class="nested-select"' if level > 0 else '' } style="margin-left: {level * 20}px;">{indent} {group["name"]}</option>')
+        class_attribute = 'class="nested-select"' if level > 0 else ''
+        result.append(f'<option value="{group["id"]}" {class_attribute} style="margin-left: {level * 20}px;">{indent} {group["name"]}</option>')
         if group.get('children'):
             result.extend(render_group_options(group['children'], level + 1))
     return '\n'.join(result)
