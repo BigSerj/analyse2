@@ -24,6 +24,8 @@ with open('config.py', 'r') as config_file:
 BASE_URL = 'https://api.moysklad.ru/api/remap/1.2'
 
 print(f"ПРИВЕТ ПРИВЕТ ПРИВЕТ ТЕСТТЕСТТЕСТ")
+print(f"ПРИВЕТ ПРИВЕТ ПРИВЕТ ТЕСТТЕСТТЕСТ")
+print(f"ПРИВЕТ ПРИВЕТ ПРИВЕТ ТЕСТТЕСТТЕСТ")
 
 processing_cancelled = False
 processing_lock = threading.Lock()
