@@ -23,6 +23,8 @@ with open('config.py', 'r') as config_file:
 
 BASE_URL = 'https://api.moysklad.ru/api/remap/1.2'
 
+print(f"ПРИВЕТ ПРИВЕТ ПРИВЕТ ТЕСТТЕСТТЕСТ")
+
 processing_cancelled = False
 processing_lock = threading.Lock()
 
@@ -2141,6 +2143,7 @@ def get_bundle_components(bundle_href):
         data = response.json()
         if not data or 'rows' not in data:
             return []
+
             
         # Фильтруем только товары и модификации
         valid_components = []
