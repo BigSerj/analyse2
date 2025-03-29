@@ -6,11 +6,11 @@ from appiframe import configure_app
 
 app = Flask(__name__)
 
-# Add port configuration
+# Конфигурация порта для Render
 port = int(os.environ.get("PORT", 10000))
 
-# Конфигурируем приложение, используя функции из appiframe
+# Конфигурируем приложение
 configure_app(app)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False)
