@@ -23,9 +23,6 @@ with open('config.py', 'r') as config_file:
 
 BASE_URL = 'https://api.moysklad.ru/api/remap/1.2'
 
-print(f"ПРИВЕТ ПРИВЕТ ПРИВЕТ ТЕСТТЕСТТЕСТ")
-print(f"ПРИВЕТ ПРИВЕТ ПРИВЕТ ТЕСТТЕСТТЕСТ")
-print(f"ПРИВЕТ ПРИВЕТ ПРИВЕТ ТЕСТТЕСТТЕСТ")
 
 processing_cancelled = False
 processing_lock = threading.Lock()
@@ -2161,5 +2158,4 @@ def get_bundle_components(bundle_href):
         return []
 
 if __name__ == '__main__':
-    print("Starting Flask iframe app...")
-    app.run(debug=True, port=5001)  # Используем другой порт, чтобы не конфликтовать с основным приложением 
+    print("This application should be run through a WSGI server")
