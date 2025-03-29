@@ -19,11 +19,10 @@ app = Flask(__name__)
 
 def configure_app(app):
     """Конфигурирует Flask приложение, добавляя все необходимые маршруты и функции"""
-    # Перемещаем все глобальные переменные внутрь функции
+    # Глобальные переменные
     global processing_cancelled, processing_lock, current_status, api_request_times
     global BASE_URL, MOYSKLAD_TOKEN
     
-    # Инициализируем глобальные переменные
     processing_cancelled = False
     processing_lock = threading.Lock()
     current_status = {'total': 0, 'processed': 0}
@@ -35,7 +34,100 @@ def configure_app(app):
     
     BASE_URL = 'https://api.moysklad.ru/api/remap/1.2'
     
-    # Регистрируем все маршруты
+    def get_stores():
+        """Получает список складов из МойСклад"""
+        url = f"{BASE_URL}/entity/store"
+        headers = {
+            'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
+            'Accept': 'application/json;charset=utf-8'
+        }
+        
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                stores = response.json()['rows']
+                return [{'id': store['id'], 'name': store['name']} for store in stores]
+            else:
+                print(f"Ошибка при получении списка складов: {response.status_code}")
+                return []
+        except Exception as e:
+            print(f"Ошибка при получении списка складов: {str(e)}")
+            return []
+
+    def get_product_groups():
+        """Получает список групп товаров из МойСклад"""
+        url = f"{BASE_URL}/entity/productfolder"
+        headers = {
+            'Authorization': f'Bearer {MOYSKLAD_TOKEN}',
+            'Accept': 'application/json;charset=utf-8'
+        }
+        
+        try:
+            all_groups = []
+            offset = 0
+            limit = 1000
+            
+            while True:
+                params = {
+                    'offset': offset,
+                    'limit': limit,
+                    'expand': 'productFolder'
+                }
+                
+                response = requests.get(url, headers=headers, params=params)
+                if response.status_code == 200:
+                    data = response.json()
+                    all_groups.extend(data['rows'])
+                    if len(data['rows']) < limit:
+                        break
+                    offset += limit
+                else:
+                    print(f"Ошибка при получении списка групп товаров: {response.status_code}")
+                    return []
+            
+            return build_group_hierarchy(all_groups)
+        except Exception as e:
+            print(f"Ошибка при получении списка групп товаров: {str(e)}")
+            return []
+
+    def build_group_hierarchy(groups):
+        """Строит иерархию групп товаров"""
+        # ... (код функции build_group_hierarchy)
+
+    def prepare_groups_for_js(groups):
+        """Подготавливает группы для использования в JavaScript"""
+        if not groups:
+            return []
+        
+        result = []
+        for group in groups:
+            group_data = {
+                'id': group['id'],
+                'name': group['name'],
+                'children': prepare_groups_for_js(group.get('children', [])),
+                'hasChildren': bool(group.get('children'))
+            }
+            result.append(group_data)
+        return result
+
+    def render_group_options(groups, level=0):
+        """Рендерит HTML-опции для групп товаров"""
+        # ... (код функции render_group_options)
+
+    def get_report_data(start_date, end_date, store_id, product_groups):
+        """Получает данные отчета из МойСклад"""
+        # ... (код функции get_report_data)
+
+    def create_excel_report(report_data, store_id, start_date, end_date, planning_days):
+        """Создает Excel отчет"""
+        # ... (код функции create_excel_report)
+
+    def check_if_cancelled():
+        """Проверяет, не была ли отменена обработка отчета"""
+        global processing_cancelled
+        return processing_cancelled
+
+    # Маршруты
     @app.route('/')
     def index():
         return render_template('iframe.html', 
@@ -43,11 +135,11 @@ def configure_app(app):
                              product_groups=get_product_groups(),
                              product_groups_json=json.dumps(prepare_groups_for_js(get_product_groups())),
                              render_group_options=render_group_options)
-    
+
     @app.route('/iframe')
     def iframe():
         return index()
-    
+
     @app.route('/process', methods=['POST'])
     def process():
         try:
@@ -169,11 +261,7 @@ def configure_app(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
-    # Остальные функции остаются без изменений
-    ...
+    return app
 
-# Остальной код файла остается без изменений
-
-# Заменяем блок if __name__ == '__main__':
 if __name__ == '__main__':
     print("This application should be run through a WSGI server")
