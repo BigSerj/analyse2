@@ -2157,5 +2157,6 @@ def get_bundle_components(bundle_href):
         print(f"Ошибка при получении компонентов комплекта: {str(e)}")
         return []
 
+# Заменяем блок if __name__ == '__main__':
 if __name__ == '__main__':
     print("This application should be run through a WSGI server")
