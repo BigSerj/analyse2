@@ -36,11 +36,28 @@ api_request_times = []
 # Добавляем корневой маршрут
 @app.route('/')
 def index():
-    return render_template('iframe.html', 
-                         stores=get_stores(),
-                         product_groups=get_product_groups(),
-                         product_groups_json=json.dumps(prepare_groups_for_js(get_product_groups())),
-                         render_group_options=render_group_options)
+    try:
+        stores = get_stores()
+        print("Получены склады:", len(stores))
+        
+        product_groups = get_product_groups()
+        print("Получены группы товаров:", product_groups is not None)
+        
+        if product_groups is None:
+            product_groups = []
+            
+        product_groups_json = json.dumps(prepare_groups_for_js(product_groups))
+        
+        return render_template('iframe.html', 
+                             stores=stores,
+                             product_groups=product_groups,
+                             product_groups_json=product_groups_json,
+                             render_group_options=render_group_options)
+    except Exception as e:
+        print(f"Ошибка в index(): {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return f"Ошибка при загрузке страницы: {str(e)}", 500
 
 # Добавляем маршрут iframe (теперь он будет дублировать корневой)
 @app.route('/iframe')
