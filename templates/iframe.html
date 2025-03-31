@@ -359,7 +359,6 @@
 
                 const currentStore = stores[currentStoreIndex];
                 
-                // Update overlay title with progress
                 document.getElementById('overlayTitle').textContent = 
                     `Формирование отчета ${currentStore.name} (${currentStoreIndex + 1} из ${stores.length})`;
                 document.getElementById('statusText').textContent = '';
@@ -372,62 +371,8 @@
                     eventSource.close();
                 }
 
-                // Start event source for progress monitoring
-                eventSource = new EventSource('/status-stream');
-                let lastEventTime = Date.now();
-                
-                eventSource.onmessage = function(event) {
-                    lastEventTime = Date.now();
-                    const data = event.data;
-                    
-                    if (data === '...') {
-                        document.getElementById('remainingItems').textContent = '...';
-                        document.getElementById('remainingTime').textContent = '...';
-                    } else {
-                        try {
-                            const statusData = JSON.parse(data);
-                            const remainingNum = statusData.remaining;
-                            
-                            if (remainingNum > 0) {
-                                document.getElementById('remainingItems').textContent = 
-                                    `${statusData.processed} из ${statusData.total}, осталось ${remainingNum}`;
-                                
-                                // Используем среднее время запроса из сервера
-                                const avgRequestTime = statusData.avg_request_time;
-                                // Вычисляем общее время в секундах и округляем до ближайших 10 секунд вверх
-                                const totalSeconds = Math.ceil(remainingNum * avgRequestTime / 10) * 10;
-                                
-                                if (totalSeconds <= 0) {
-                                    document.getElementById('remainingTime').textContent = 'менее 10 секунд';
-                                } else {
-                                    const hours = Math.floor(totalSeconds / 3600);
-                                    const minutes = Math.floor((totalSeconds % 3600) / 60);
-                                    const seconds = Math.floor(totalSeconds % 60);
-                                    
-                                    let timeString = '';
-                                    if (hours > 0) {
-                                        timeString += hours + ' ч ';
-                                        if (minutes > 0) timeString += minutes + ' мин';
-                                    } else if (minutes > 0) {
-                                        timeString += minutes + ' мин ';
-                                        if (seconds > 0) timeString += seconds + ' сек';
-                                    } else {
-                                        timeString += seconds + ' сек';
-                                    }
-                                    
-                                    document.getElementById('remainingTime').textContent = timeString.trim();
-                                }
-                            }
-                        } catch (e) {
-                            console.error('Error parsing status data:', e);
-                            document.getElementById('remainingItems').textContent = '...';
-                            document.getElementById('remainingTime').textContent = '...';
-                        }
-                    }
-                };
-
-                // Start processing by sending POST request
-                fetch('/process', {
+                // Создаем Promise для отслеживания завершения обработки
+                const processPromise = fetch('/process', {
                     method: 'POST',
                     body: formData
                 })
@@ -444,32 +389,22 @@
                     
                     if (data.cancelled) {
                         hideOverlay();
-                        return;
+                        return Promise.reject('cancelled');
                     }
                     
                     if (data.error) {
                         document.getElementById('statusText').textContent = `Ошибка: ${data.error}`;
-                        setTimeout(() => {
-                            currentStoreIndex++;
-                            processNextStore();
-                        }, 2000);
-                        return;
+                        return Promise.resolve();
                     }
                     
                     if (data.success && data.file_url) {
-                        // Create a temporary link to download the file
                         const link = document.createElement('a');
                         link.href = data.file_url;
                         link.style.display = 'none';
                         document.body.appendChild(link);
                         link.click();
                         document.body.removeChild(link);
-                        
-                        // Wait a bit to ensure download starts before moving to next store
-                        setTimeout(() => {
-                            currentStoreIndex++;
-                            processNextStore();
-                        }, 1000);
+                        return Promise.resolve();
                     }
                 })
                 .catch(error => {
@@ -478,11 +413,73 @@
                     if (eventSource) {
                         eventSource.close();
                     }
-                    setTimeout(() => {
-                        currentStoreIndex++;
-                        processNextStore();
-                    }, 2000);
+                })
+                .finally(() => {
+                    // Увеличиваем индекс и переходим к следующему складу
+                    currentStoreIndex++;
+                    // Используем setTimeout с нулевой задержкой для асинхронного вызова
+                    setTimeout(processNextStore, 0);
                 });
+
+                // Запускаем мониторинг прогресса
+                startProgressMonitoring();
+            }
+
+            // Добавляем новую функцию для мониторинга прогресса
+            function startProgressMonitoring() {
+                eventSource = new EventSource('/status-stream');
+                
+                eventSource.onmessage = function(event) {
+                    const data = event.data;
+                    
+                    if (data === '...') {
+                        document.getElementById('remainingItems').textContent = '...';
+                        document.getElementById('remainingTime').textContent = '...';
+                    } else {
+                        try {
+                            const statusData = JSON.parse(data);
+                            updateProgressDisplay(statusData);
+                        } catch (e) {
+                            console.error('Error parsing status data:', e);
+                            document.getElementById('remainingItems').textContent = '...';
+                            document.getElementById('remainingTime').textContent = '...';
+                        }
+                    }
+                };
+            }
+
+            // Добавляем функцию для обновления отображения прогресса
+            function updateProgressDisplay(statusData) {
+                const remainingNum = statusData.remaining;
+                
+                if (remainingNum > 0) {
+                    document.getElementById('remainingItems').textContent = 
+                        `${statusData.processed} из ${statusData.total}, осталось ${remainingNum}`;
+                    
+                    const avgRequestTime = statusData.avg_request_time;
+                    const totalSeconds = Math.ceil(remainingNum * avgRequestTime / 10) * 10;
+                    
+                    if (totalSeconds <= 0) {
+                        document.getElementById('remainingTime').textContent = 'менее 10 секунд';
+                    } else {
+                        const hours = Math.floor(totalSeconds / 3600);
+                        const minutes = Math.floor((totalSeconds % 3600) / 60);
+                        const seconds = Math.floor(totalSeconds % 60);
+                        
+                        let timeString = '';
+                        if (hours > 0) {
+                            timeString += hours + ' ч ';
+                            if (minutes > 0) timeString += minutes + ' мин';
+                        } else if (minutes > 0) {
+                            timeString += minutes + ' мин ';
+                            if (seconds > 0) timeString += seconds + ' сек';
+                        } else {
+                            timeString += seconds + ' сек';
+                        }
+                        
+                        document.getElementById('remainingTime').textContent = timeString.trim();
+                    }
+                }
             }
 
             // Add store button click handler
